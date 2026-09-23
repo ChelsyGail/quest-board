@@ -1,0 +1,39 @@
+{
+  "name": "Python API Dev Container",
+  "dockerComposeFile": [
+    "../docker-compose.yml"
+  ],
+  "service": "python-api-service",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "none",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": false,
+        "[python]": {
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        }
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.black-formatter"
+      ]
+    }
+  },
+  "postCreateCommand": "pip install --upgrade pip && python -m pip install poetry==2.5.1 && poetry config virtualenvs.create false && cd /workspace/apps/backend && poetry install --with dev && poetry run pre-commit install",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "API",
+      "onAutoForward": "notify"
+    }
+  },
+  "remoteUser": "root"
+}

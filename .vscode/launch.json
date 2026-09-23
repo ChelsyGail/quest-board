@@ -1,0 +1,34 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Console App",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/backend/src/app.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Python: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+              "src.app:app",
+              "--host",
+              "0.0.0.0",
+              "--port",
+              "8000",
+              "--reload"
+            ],
+            "jinja": true,
+            "justMyCode": false,
+            "cwd": "${workspaceFolder}/apps/backend",
+            "env":{
+                "PYTHONPATH": "usr/bin/python"
+            },
+            "console": "integratedTerminal"
+          }
+    ],
+    "justMyCode": false
+}
