@@ -1,0 +1,36 @@
+name: "${PROJECT_NAME:-local}-devcontainer"
+services:
+
+  python-api-service:
+    image: mcr.microsoft.com/devcontainers/python:dev-3.12-bookworm
+    init: true
+    volumes:
+      - ..:/workspace:cached
+    command: sleep infinity
+    ports:
+      - 8000:8000
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PROJECT_NAME=${PROJECT_NAME:-local}
+    container_name: "${PROJECT_NAME:-local}-python-api-container"
+    hostname: "${PROJECT_NAME:-local}-python-api-host"
+    user: root
+
+  mysql-db-service:
+    image: mysql:9.7
+    restart: unless-stopped
+    container_name: "${PROJECT_NAME:-local}-mysql-container"
+    hostname: "${PROJECT_NAME:-local}-mysql-host"
+    volumes:
+      - mysql-data-volume:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-rootpass}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-app}"
+      MYSQL_USER: "${MYSQL_USER:-appuser}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:-apppass}"
+    ports:
+      - "3306:3306"
+
+volumes:
+  mysql-data-volume:
+    name: "${PROJECT_NAME:-local}-mysql-data"
