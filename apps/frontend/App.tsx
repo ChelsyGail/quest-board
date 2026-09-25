@@ -1,6 +1,6 @@
 /**
  * QuestBoard
- * Sign up, log in, and manage a user profile against the backend API.
+ * Sign up, log in, and manage a user profile against the backend API. .
  *
  * @format
  */
