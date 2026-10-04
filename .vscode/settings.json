@@ -1,3 +1,8 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python.defaultInterpreterPath": "/Users/chelsygailpena/Library/Caches/pypoetry/virtualenvs/backend-api-WjXyGO6h-py3.12/bin/python",
+    "python.analysis.extraPaths": [
+        "apps/backend"
+    ],
+    "python-envs.defaultPackageManager": "ms-python.python:pip"
 }
