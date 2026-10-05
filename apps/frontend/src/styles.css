@@ -136,6 +136,78 @@ input.invalid {
   outline-offset: 2px;
 }
 
+.button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.button-secondary {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 16px;
+  color: var(--accent);
+  background: #fff;
+  border: 1px solid var(--border);
+}
+
+.button-secondary:hover {
+  background: var(--bg);
+}
+
+.screen-title {
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.form-error {
+  margin: 14px 0 0;
+  font-size: 14px;
+  text-align: center;
+  color: var(--error);
+}
+
+.form-error:empty {
+  margin: 0;
+}
+
+.notice {
+  margin: 0 0 20px;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: #eef2ff;
+  border: 1px solid #d5ddfb;
+  border-radius: 8px;
+}
+
+.account-summary {
+  margin: 0 0 20px;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: var(--bg);
+  border-radius: 8px;
+}
+
+.account-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.muted {
+  color: var(--muted);
+}
+
 .message {
   min-height: 20px;
   margin: 14px 0 0;
@@ -144,14 +216,29 @@ input.invalid {
   color: var(--success);
 }
 
-.link {
-  color: var(--accent);
-  text-decoration: none;
+.link-button {
+  padding: 0;
+  font: inherit;
   font-weight: 500;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
 }
 
-.link:hover {
+.link-button:hover {
   text-decoration: underline;
+}
+
+.link-button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.unavailable {
+  color: var(--muted);
+  cursor: default;
 }
 
 .small {

@@ -1,38 +1,120 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Login from "./Login.jsx";
+import Profile from "./Profile.jsx";
+import Signup from "./Signup.jsx";
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// The session is { token, userId, expiresAt, user } and is never stored with a password.
+// sessionStorage keeps it across reloads but forgets it when the tab is closed.
+const SESSION_KEY = "questboard.session";
+
+function loadSession() {
+  try {
+    const session = JSON.parse(sessionStorage.getItem(SESSION_KEY));
+    if (
+      session &&
+      typeof session.token === "string" &&
+      typeof session.userId === "string" &&
+      !Number.isNaN(Date.parse(session.expiresAt))
+    ) {
+      return session;
+    }
+  } catch {
+    // Ignore unreadable data; it is removed below.
+  }
+  sessionStorage.removeItem(SESSION_KEY);
+  return null;
+}
+
+function saveSession(session) {
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
 
 function App() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [emailError, setEmailError] = useState("");
-  const [passwordError, setPasswordError] = useState("");
-  const [message, setMessage] = useState("");
+  const [session, setSession] = useState(loadSession);
+  const [screen, setScreen] = useState("login"); // "login" or "signup" when logged out
+  const [notice, setNotice] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
 
-  function handleSubmit(event) {
-    event.preventDefault();
+  function endSession(message) {
+    sessionStorage.removeItem(SESSION_KEY);
+    setSession(null);
+    setScreen("login");
+    setNotice(message);
+  }
 
-    let newEmailError = "";
-    let newPasswordError = "";
+  // Log the user out when the token's expires_at time passes.
+  // Browsers slow down timers in background tabs, so also check when the window regains focus.
+  useEffect(() => {
+    if (!session) return;
 
-    if (email.trim() === "") {
-      newEmailError = "Please enter your email.";
-    } else if (!EMAIL_PATTERN.test(email.trim())) {
-      newEmailError = "Please enter a valid email address.";
+    function checkExpiry() {
+      if (Date.now() >= Date.parse(session.expiresAt)) {
+        endSession("Your session has expired. Please log in again.");
+      }
     }
 
-    if (password === "") {
-      newPasswordError = "Please enter your password.";
-    }
+    checkExpiry();
+    const timer = setInterval(checkExpiry, 15000);
+    window.addEventListener("focus", checkExpiry);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", checkExpiry);
+    };
+  }, [session]);
 
-    setEmailError(newEmailError);
-    setPasswordError(newPasswordError);
+  function handleAuthenticated(newSession) {
+    saveSession(newSession);
+    setSession(newSession);
+    setNotice("");
+  }
 
-    if (newEmailError === "" && newPasswordError === "") {
-      setMessage("Login UI ready — authentication will be connected later.");
-    } else {
-      setMessage("");
-    }
+  function handleUserUpdated(user) {
+    // Ignore a save that finishes after the user logged out or the session expired.
+    const current = loadSession();
+    if (!current || current.token !== session?.token) return;
+
+    const updatedSession = { ...current, user };
+    saveSession(updatedSession);
+    setSession(updatedSession);
+  }
+
+  function handleAccountCreated(email) {
+    setLoginEmail(email);
+    setScreen("login");
+    setNotice("Your account was created. Please log in.");
+  }
+
+  function showScreen(name) {
+    setScreen(name);
+    setNotice("");
+  }
+
+  let content;
+  if (session) {
+    content = (
+      <Profile
+        session={session}
+        onUserUpdated={handleUserUpdated}
+        onLogout={() => endSession("You have been logged out.")}
+        onSessionExpired={() => endSession("Your session has expired. Please log in again.")}
+      />
+    );
+  } else if (screen === "signup") {
+    content = (
+      <Signup
+        onAuthenticated={handleAuthenticated}
+        onAccountCreated={handleAccountCreated}
+        onBackToLogin={() => showScreen("login")}
+      />
+    );
+  } else {
+    content = (
+      <Login
+        initialEmail={loginEmail}
+        onAuthenticated={handleAuthenticated}
+        onShowSignup={() => showScreen("signup")}
+      />
+    );
   }
 
   return (
@@ -44,46 +126,9 @@ function App() {
           <p className="audience">For AUP students</p>
         </header>
 
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="field">
-            <label htmlFor="email">Email</label>
-            <input
-              type="email"
-              id="email"
-              placeholder="you@aup.edu"
-              autoComplete="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className={emailError ? "invalid" : ""}
-            />
-            <p className="error">{emailError}</p>
-          </div>
+        {notice && <p className="notice">{notice}</p>}
 
-          <div className="field">
-            <div className="label-row">
-              <label htmlFor="password">Password</label>
-              <a href="#" className="link small">Forgot password?</a>
-            </div>
-            <input
-              type="password"
-              id="password"
-              placeholder="••••••••"
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className={passwordError ? "invalid" : ""}
-            />
-            <p className="error">{passwordError}</p>
-          </div>
-
-          <button type="submit" className="button">Log in</button>
-
-          <p className="message" aria-live="polite">{message}</p>
-        </form>
-
-        <p className="signup">
-          New to QuestBoard? <a href="#" className="link">Sign up</a>
-        </p>
+        {content}
       </section>
     </main>
   );
