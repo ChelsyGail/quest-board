@@ -54,6 +54,16 @@ def setup_user_router(app: FastAPI, services: Services):
             )
         return UserResponse(data=_to_resource(record))
 
+    @router.get(
+        "/me",
+        response_model=UserResponse,
+        response_model_exclude_none=True,
+        responses={401: {"model": UserErrorResponse}},
+    )
+    def get_me(current_user: CurrentUser = Depends(get_current_user)):
+        record = services.user_service.get_user(current_user.user_id)
+        return UserResponse(data=_to_resource(record))
+
     @router.patch(
         "/{user_id}",
         response_model=UserResponse,
@@ -75,7 +85,7 @@ def setup_user_router(app: FastAPI, services: Services):
     ):
         logger.info("Received update user request", extra={"user_id": user_id})
         if current_user.user_id != user_id and not current_user.has_role(
-            UserRole.MODERATOR, UserRole.ORGANIZER
+            UserRole.ADMIN
         ):
             logger.warning(
                 "Rejected update from non-owner",
