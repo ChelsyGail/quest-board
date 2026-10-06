@@ -12,6 +12,14 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PROJECT_NAME=${PROJECT_NAME:-local}
+      - MYSQL_HOST=${MYSQL_HOST:-local}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-app}
+      - MYSQL_USER=${MYSQL_USER:-appuser}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-apppass}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - JWT_EXPIRES_MINUTES=${JWT_EXPIRES_MINUTES:-60}
     container_name: "${PROJECT_NAME:-local}-python-api-container"
     hostname: "${PROJECT_NAME:-local}-python-api-host"
     user: root
@@ -20,7 +28,7 @@ services:
     image: mysql:9.7
     restart: unless-stopped
     container_name: "${PROJECT_NAME:-local}-mysql-container"
-    hostname: "${PROJECT_NAME:-local}-mysql-host"
+    hostname: "${MYSQL_HOST:-local}"
     volumes:
       - mysql-data-volume:/var/lib/mysql
     environment:
