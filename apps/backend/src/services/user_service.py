@@ -56,7 +56,7 @@ class UserService:
                     text(
                         """
                         INSERT INTO users (email, name, password_hash)
-                        VALUES (:email, :name, :password_hash, :roles)
+                        VALUES (:email, :name, :password_hash)
                         """
                     ),
                     {
