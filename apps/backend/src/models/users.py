@@ -20,9 +20,13 @@ Password = Annotated[str, StringConstraints(min_length=12, max_length=128)]
 
 
 class UserRole(StrEnum):
-    STUDENT = "student"
-    ORGANIZER = "organizer"
-    MODERATOR = "moderator"
+    ADMIN = "admin"  # will approve role requests
+    STUDENT = "student"  # do quests
+    ORGANIZER = "organizer"  # post quests
+    MODERATOR = "moderator"  # validate student submissions/comments
+
+
+REQUESTABLE_ROLES = frozenset({UserRole.ORGANIZER, UserRole.MODERATOR})
 
 
 class UserCreate(BaseModel):
@@ -31,9 +35,9 @@ class UserCreate(BaseModel):
     email: UserEmail
     name: UserName
     password: Password
-    roles: set[UserRole] = Field(
-        default_factory=lambda: {UserRole.STUDENT}, min_length=1
-    )
+    # roles: set[UserRole] = Field(
+    #    default_factory=lambda: {UserRole.STUDENT}, min_length=1
+    # )
 
 
 class UserUpdate(BaseModel):
@@ -42,7 +46,7 @@ class UserUpdate(BaseModel):
     email: UserEmail | None = None
     name: UserName | None = None
     password: Password | None = None
-    roles: set[UserRole] | None = Field(default=None, min_length=1)
+    # roles: set[UserRole] | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def require_change(self) -> UserUpdate:

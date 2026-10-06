@@ -2,9 +2,9 @@
 import logging
 from pathlib import Path
 
+from database.connection import open_connection
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
-from src.database.connection import open_connection
 from utilities.settings import load_database_settings
 
 SCHEMA_DIRECTORY = Path(__file__).parent / "schema"

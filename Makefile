@@ -10,3 +10,6 @@ clean:
 
 lint:
 	cd apps/backend && poetry run pre-commit run --all-files
+
+db-schema:
+	cd apps/backend/src && poetry run python -m database.apply_schema

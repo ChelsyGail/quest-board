@@ -48,22 +48,22 @@ class UserService:
     def create_user(self, user: UserCreate) -> UserRecord:
         logger.info("Creating user", extra={"email": str(user.email)})
         password_hash = self.password_hash.hash(user.password)
-        roles = self._serialize_roles(user.roles)
+        # roles = self._serialize_roles(user.roles)
 
         try:
             with self.engine.begin() as connection:
                 result = connection.execute(
                     text(
                         """
-                        INSERT INTO users (email, name, password_hash, roles)
-                        VALUES (:email, :name, :password_hash, :roles)
+                        INSERT INTO users (email, name, password_hash)
+                        VALUES (:email, :name, :password_hash)
                         """
                     ),
                     {
                         "email": str(user.email),
                         "name": user.name,
                         "password_hash": password_hash,
-                        "roles": roles,
+                        # "roles": roles,
                     },
                 )
                 user_id = result.lastrowid
@@ -86,8 +86,8 @@ class UserService:
             changes["email"] = str(changes["email"])
         if "password" in changes:
             changes["password_hash"] = self.password_hash.hash(changes.pop("password"))
-        if "roles" in changes:
-            changes["roles"] = self._serialize_roles(changes["roles"])
+        # if "roles" in changes:
+        #   changes["roles"] = self._serialize_roles(changes["roles"])
 
         assignments = [f"{field} = :{field}" for field in changes]
         assignments.append("updated_at = CURRENT_TIMESTAMP(6)")
