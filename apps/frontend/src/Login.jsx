@@ -34,8 +34,7 @@ function Login({ initialEmail, onAuthenticated, onShowSignup }) {
     setIsSubmitting(true);
     try {
       const session = await login(email.trim(), password);
-      // No profile endpoint exists yet, so the user's name and email are unknown here.
-      onAuthenticated({ ...session, user: null });
+      onAuthenticated(session);
     } catch (error) {
       setFormError(
         error.status === 401 ? "Email or password is incorrect." : error.message
