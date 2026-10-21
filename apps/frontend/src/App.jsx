@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import AdminRoleRequests from "./AdminRoleRequests.jsx";
 import { getCurrentUser } from "./api.js";
+import CreateEvent from "./CreateEvent.jsx";
 import Login from "./Login.jsx";
 import { pagesFor, resolvePage } from "./navigation.js";
 import Profile from "./Profile.jsx";
@@ -194,6 +195,8 @@ function App() {
           </button>
         </>
       );
+    } else if (currentPage.id === "create-event") {
+      body = <CreateEvent session={session} onSessionExpired={handleSessionRejected} />;
     } else if (currentPage.id === "admin") {
       body = (
         <AdminRoleRequests session={session} onSessionExpired={handleSessionRejected} />

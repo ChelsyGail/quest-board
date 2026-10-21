@@ -1,4 +1,4 @@
-import { roleRequestsEnabled } from "./api.js";
+import { catalogueEnabled, roleRequestsEnabled } from "./api.js";
 
 // The signed-in pages, in tab order, and who may see them (FE-10).
 // `roles`: the user needs at least one of these; leave it out for a page everyone sees.
@@ -7,6 +7,13 @@ import { roleRequestsEnabled } from "./api.js";
 // Hiding a page is only a convenience; the backend checks roles on every request.
 export const PAGES = [
   { id: "account", label: "Your account" },
+  {
+    id: "create-event",
+    label: "Create event",
+    roles: ["organizer"],
+    isAvailable: catalogueEnabled,
+    wide: true,
+  },
   {
     id: "admin",
     label: "Role requests",
