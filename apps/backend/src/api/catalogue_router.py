@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import status
+from models.catalogue import EventCreate
 from models.catalogue import ItemAttributes
 from models.catalogue import ItemResourceData
 from models.catalogue import QuestCreate
@@ -29,6 +30,20 @@ def setup_catalogue_router(app: FastAPI, services: Services):
     router = APIRouter(tags=["catalogue"])
     get_current_user = build_current_user_dependency(services.auth_service)
     require_organizer = require_roles(get_current_user, UserRole.ORGANIZER)
+
+    @router.post(
+        "/events",
+        response_model=ItemResponse,
+        response_model_exclude_none=True,
+        status_code=status.HTTP_201_CREATED,
+        responses=CREATE_ERROR_RESPONSES,
+    )
+    def create_event(
+        event: EventCreate,
+        current_user: CurrentUser = Depends(require_organizer),
+    ):
+        record = services.catalogue_service.create_event(current_user.user_id, event)
+        return ItemResponse(data=_to_resource(record))
 
     @router.post(
         "/quests",

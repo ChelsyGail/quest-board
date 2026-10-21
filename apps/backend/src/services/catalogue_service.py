@@ -6,6 +6,7 @@ from datetime import datetime
 from datetime import timezone
 
 from database.connection import create_database_engine
+from models.catalogue import EventCreate
 from models.catalogue import ItemCreate
 from models.catalogue import ItemKind
 from models.catalogue import ItemStatus
@@ -60,6 +61,9 @@ def from_utc_naive(value: datetime | None) -> datetime | None:
 class CatalogueService:
     def __init__(self, settings: DatabaseSettings):
         self.engine = create_database_engine(settings)
+
+    def create_event(self, owner_id: int, event: EventCreate) -> ItemRecord:
+        return self._create_item(owner_id, ItemKind.EVENT, event)
 
     def create_quest(self, owner_id: int, quest: QuestCreate) -> ItemRecord:
         return self._create_item(owner_id, ItemKind.QUEST, quest)

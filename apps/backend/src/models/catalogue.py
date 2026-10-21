@@ -84,6 +84,10 @@ class ItemCreate(BaseModel):
         return self
 
 
+class EventCreate(ItemCreate):
+    pass
+
+
 class QuestCreate(ItemCreate):
     proof_instructions: ProofInstructions
     point_value: PointValue
