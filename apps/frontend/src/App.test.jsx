@@ -285,3 +285,55 @@ describe("Admin navigation (no Jira key yet)", () => {
     expect(screen.queryByRole("button", { name: "Role requests" })).not.toBeInTheDocument();
   });
 });
+
+describe("Role-aware navigation (FE-10)", () => {
+  it.each([
+    ["a student", ["student"]],
+    ["an organizer", ["student", "organizer"]],
+    ["a moderator", ["student", "moderator"]],
+  ])("shows %s only their account, with no admin controls", async (_, roles) => {
+    roleRequestsEnabled.mockReturnValue(true);
+    getCurrentUser.mockResolvedValue({ ...USER, roles });
+    storeSession();
+    render(<App />);
+
+    await screen.findByLabelText("Name");
+    expect(screen.queryByRole("navigation", { name: "Pages" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Role requests" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
+    expect(listRoleRequests).not.toHaveBeenCalled();
+  });
+
+  it("returns an admin to their account when a refresh removes the admin role", async () => {
+    const user = userEvent.setup();
+    roleRequestsEnabled.mockReturnValue(true);
+    getCurrentUser.mockResolvedValue(ADMIN);
+    storeSession({ userId: "1" });
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Role requests" }));
+    expect(screen.getByRole("heading", { name: "Role requests" })).toBeInTheDocument();
+
+    // Leave the admin page to refresh, then come back after the role is gone.
+    await user.click(screen.getByRole("button", { name: "Your account" }));
+    getCurrentUser.mockResolvedValue({ ...ADMIN, roles: ["student"] });
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(await screen.findByText("Roles: Student")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Pages" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toHaveValue("Root");
+  });
+
+  it("uses the wide layout only while the admin page is shown", async () => {
+    const user = userEvent.setup();
+    roleRequestsEnabled.mockReturnValue(true);
+    getCurrentUser.mockResolvedValue(ADMIN);
+    storeSession({ userId: "1" });
+    const { container } = render(<App />);
+
+    const adminTab = await screen.findByRole("button", { name: "Role requests" });
+    expect(container.querySelector(".card")).not.toHaveClass("card-wide");
+    await user.click(adminTab);
+    expect(container.querySelector(".card")).toHaveClass("card-wide");
+  });
+});
