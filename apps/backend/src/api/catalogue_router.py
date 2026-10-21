@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import FastAPI
+from fastapi import Path
 from fastapi import status
 from models.catalogue import ItemAttributes
 from models.catalogue import ItemResourceData
@@ -10,10 +11,15 @@ from models.catalogue import QuestCreate
 from models.responses.catalogue import ItemErrorResponse
 from models.responses.catalogue import ItemResponse
 from models.users import UserRole
+from services.catalogue_service import ItemAlreadyPublishedError
+from services.catalogue_service import ItemArchivedError
+from services.catalogue_service import ItemNotFoundError
+from services.catalogue_service import ItemOwnershipError
 from services.catalogue_service import ItemRecord
 from utilities.auth import build_current_user_dependency
 from utilities.auth import CurrentUser
 from utilities.auth import require_roles
+from utilities.json_api_errors import json_api_error_response
 from utilities.services import Services
 
 logger = logging.getLogger(__name__)
@@ -21,6 +27,14 @@ logger = logging.getLogger(__name__)
 CREATE_ERROR_RESPONSES = {
     401: {"model": ItemErrorResponse},
     403: {"model": ItemErrorResponse},
+    422: {"model": ItemErrorResponse},
+}
+
+CHANGE_ERROR_RESPONSES = {
+    401: {"model": ItemErrorResponse},
+    403: {"model": ItemErrorResponse},
+    404: {"model": ItemErrorResponse},
+    409: {"model": ItemErrorResponse},
     422: {"model": ItemErrorResponse},
 }
 
@@ -44,7 +58,102 @@ def setup_catalogue_router(app: FastAPI, services: Services):
         record = services.catalogue_service.create_quest(current_user.user_id, quest)
         return ItemResponse(data=_to_resource(record))
 
+    @router.get(
+        "/items/me",
+        response_model=ItemResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": ItemErrorResponse},
+            403: {"model": ItemErrorResponse},
+        },
+    )
+    def list_my_items(current_user: CurrentUser = Depends(require_organizer)):
+        records = services.catalogue_service.list_my_items(current_user.user_id)
+        return ItemResponse(data=[_to_resource(r) for r in records])
+
+    @router.get(
+        "/items/{item_id}",
+        response_model=ItemResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": ItemErrorResponse},
+            404: {"model": ItemErrorResponse},
+        },
+    )
+    def get_item(
+        item_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        try:
+            record = services.catalogue_service.get_item(item_id, current_user.user_id)
+        except ItemNotFoundError:
+            return _not_found()
+        return ItemResponse(data=_to_resource(record))
+
+    @router.post(
+        "/items/{item_id}/publish",
+        response_model=ItemResponse,
+        response_model_exclude_none=True,
+        responses=CHANGE_ERROR_RESPONSES,
+    )
+    def publish_item(
+        item_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        try:
+            record = services.catalogue_service.publish_item(
+                item_id, current_user.user_id
+            )
+        except ItemNotFoundError:
+            return _not_found()
+        except ItemOwnershipError:
+            return _forbidden()
+        except ItemArchivedError:
+            return _archived()
+        except ItemAlreadyPublishedError:
+            return json_api_error_response(
+                ItemErrorResponse,
+                status.HTTP_409_CONFLICT,
+                "item_already_published",
+                "Item already published",
+                "This item is already visible to students.",
+            )
+        return ItemResponse(data=_to_resource(record))
+
     app.include_router(router)
+
+
+def _not_found():
+    return json_api_error_response(
+        ItemErrorResponse,
+        status.HTTP_404_NOT_FOUND,
+        "item_not_found",
+        "Item not found",
+        "The item does not exist or is not available.",
+        "/item_id",
+    )
+
+
+def _forbidden():
+    return json_api_error_response(
+        ItemErrorResponse,
+        status.HTTP_403_FORBIDDEN,
+        "item_not_owned",
+        "Not your item",
+        "Only the organizer who created this item can change it.",
+        "/item_id",
+    )
+
+
+def _archived():
+    return json_api_error_response(
+        ItemErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "item_archived",
+        "Item archived",
+        "Archived items cannot be changed.",
+        "/item_id",
+    )
 
 
 def _to_resource(record: ItemRecord) -> ItemResourceData:
