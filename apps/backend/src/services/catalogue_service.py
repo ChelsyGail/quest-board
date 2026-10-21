@@ -16,6 +16,22 @@ from utilities.settings import DatabaseSettings
 logger = logging.getLogger(__name__)
 
 
+class ItemNotFoundError(Exception):
+    pass
+
+
+class ItemOwnershipError(Exception):
+    """The caller is not the organizer who owns the item."""
+
+
+class ItemAlreadyPublishedError(Exception):
+    pass
+
+
+class ItemArchivedError(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class ItemRecord:
     item_id: int
@@ -35,6 +51,10 @@ class ItemRecord:
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    @property
+    def is_visible(self) -> bool:
+        return self.status == ItemStatus.PUBLISHED and self.archived_at is None
 
 
 SELECT_ITEM_COLUMNS = """
@@ -109,6 +129,80 @@ class CatalogueService:
             extra={"item_id": row.item_id, "kind": kind.value},
         )
         return self._to_record(row)
+
+    def get_item(self, item_id: int, viewer_id: int) -> ItemRecord:
+        """Owners see their own drafts; everyone else only sees published, unarchived items."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(f"{SELECT_ITEM_COLUMNS} WHERE item_id = :item_id"),
+                {"item_id": item_id},
+            ).one_or_none()
+        if row is None:
+            raise ItemNotFoundError
+        record = self._to_record(row)
+        if record.owner_id != viewer_id and not record.is_visible:
+            raise ItemNotFoundError
+        return record
+
+    def list_my_items(self, owner_id: int) -> list[ItemRecord]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"""
+                    {SELECT_ITEM_COLUMNS}
+                    WHERE owner_id = :owner_id AND archived_at IS NULL
+                    ORDER BY starts_at, item_id
+                    """
+                ),
+                {"owner_id": owner_id},
+            ).all()
+        return [self._to_record(row) for row in rows]
+
+    def publish_item(self, item_id: int, actor_id: int) -> ItemRecord:
+        logger.info(
+            "Publishing catalogue item",
+            extra={"item_id": item_id, "actor_id": actor_id},
+        )
+        with self.engine.begin() as connection:
+            row = self._lock_owned_item(connection, item_id, actor_id)
+            if row.status == ItemStatus.PUBLISHED:
+                raise ItemAlreadyPublishedError
+
+            connection.execute(
+                text(
+                    """
+                    UPDATE catalogue_items
+                    SET status = :status,
+                        published_at = CURRENT_TIMESTAMP(6),
+                        updated_at = CURRENT_TIMESTAMP(6)
+                    WHERE item_id = :item_id
+                    """
+                ),
+                {"status": ItemStatus.PUBLISHED.value, "item_id": item_id},
+            )
+            row = self._load_item(connection, item_id)
+
+        logger.info("Published catalogue item", extra={"item_id": item_id})
+        return self._to_record(row)
+
+    @staticmethod
+    def _lock_owned_item(connection, item_id: int, actor_id: int):
+        """Loads an item for change, enforcing existence, ownership and archive state."""
+        row = connection.execute(
+            text(f"{SELECT_ITEM_COLUMNS} WHERE item_id = :item_id FOR UPDATE"),
+            {"item_id": item_id},
+        ).one_or_none()
+        if row is None:
+            raise ItemNotFoundError
+        if row.owner_id != actor_id:
+            logger.warning(
+                "Rejected change to another organizer's item",
+                extra={"item_id": item_id, "actor_id": actor_id},
+            )
+            raise ItemOwnershipError
+        if row.archived_at is not None:
+            raise ItemArchivedError
+        return row
 
     @staticmethod
     def _load_item(connection, item_id: int):
