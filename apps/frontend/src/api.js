@@ -14,6 +14,9 @@ export const ITEM_TITLE_MAX_LENGTH = 200;
 export const ITEM_DESCRIPTION_MAX_LENGTH = 5000;
 export const ITEM_LOCATION_MAX_LENGTH = 255;
 export const ITEM_CATEGORY_MAX_LENGTH = 64;
+export const PROOF_INSTRUCTIONS_MAX_LENGTH = 5000;
+export const POINT_VALUE_MIN = 1;
+export const POINT_VALUE_MAX = 10000;
 
 export const REQUESTABLE_ROLES = ["organizer", "moderator"];
 export const ROLE_REQUEST_STATUSES = ["pending", "approved", "rejected"];
@@ -323,4 +326,25 @@ function readItem(resource) {
 // ends_at, time_zone and category.
 export async function createEvent(event, token) {
   return readItem(await request("/events", { method: "POST", body: event, token }));
+}
+
+// GET /items/me (organizers only) -> the signed-in organizer's events and quests,
+// drafts included, earliest first.
+export async function listMyItems(token) {
+  const data = await request("/items/me", { token });
+  if (!Array.isArray(data)) {
+    throw new ApiError("The server returned an unexpected item list.", 200);
+  }
+  return data.map(readItem);
+}
+
+// PATCH /items/{id} with only the changed fields -> the updated item. Only the item's
+// owner may change it, and archived items can't be changed.
+export async function updateItem(itemId, changes, token) {
+  const resource = await request(`/items/${encodeURIComponent(itemId)}`, {
+    method: "PATCH",
+    body: changes,
+    token,
+  });
+  return readItem(resource);
 }

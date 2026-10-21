@@ -11,12 +11,30 @@ const STATUS_LABELS = {
   rejected: "Rejected",
 };
 
+const ITEM_KIND_LABELS = {
+  event: "Event",
+  quest: "Quest",
+};
+
+const ITEM_STATUS_LABELS = {
+  draft: "Draft",
+  published: "Published",
+};
+
 export function roleLabel(role) {
   return ROLE_LABELS[role] || role;
 }
 
 export function statusLabel(status) {
   return STATUS_LABELS[status] || status;
+}
+
+export function itemKindLabel(kind) {
+  return ITEM_KIND_LABELS[kind] || kind;
+}
+
+export function itemStatusLabel(status) {
+  return ITEM_STATUS_LABELS[status] || status;
 }
 
 // The backend's timestamps have no time zone, so show the date exactly as sent
