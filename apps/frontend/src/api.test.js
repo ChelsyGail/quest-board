@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  catalogueEnabled,
+  createEvent,
   createRoleRequest,
   formErrorsFrom,
   getCurrentUser,
@@ -262,5 +264,73 @@ describe("api client", () => {
       "email",
     ]);
     expect(extra).toEqual({ fieldErrors: {}, formError: "Roles: Extra inputs" });
+  });
+
+  it("creates an event with POST /events and reads the item", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(201, {
+        data: {
+          type: "catalogue-items",
+          id: "12",
+          attributes: {
+            kind: "event",
+            owner_id: "7",
+            title: "Board games night",
+            description: "Bring a game.",
+            location: "Student lounge",
+            starts_at: "2026-11-01T17:30:00Z",
+            ends_at: "2026-11-01T20:00:00Z",
+            time_zone: "Europe/Paris",
+            category: "Games",
+            status: "draft",
+            created_at: "2026-10-21T10:00:00Z",
+            updated_at: "2026-10-21T10:00:00Z",
+          },
+        },
+      })
+    );
+    const event = {
+      title: "Board games night",
+      description: "Bring a game.",
+      location: "Student lounge",
+      starts_at: "2026-11-01T17:30:00.000Z",
+      ends_at: "2026-11-01T20:00:00.000Z",
+      time_zone: "Europe/Paris",
+      category: "Games",
+    };
+
+    const item = await createEvent(event, "org-tok");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://api.test/events");
+    expect(options.method).toBe("POST");
+    expect(options.headers.Authorization).toBe("Bearer org-tok");
+    expect(JSON.parse(options.body)).toEqual(event);
+    expect(item).toMatchObject({
+      id: "12",
+      kind: "event",
+      title: "Board games night",
+      startsAt: "2026-11-01T17:30:00Z",
+      timeZone: "Europe/Paris",
+      status: "draft",
+      proofInstructions: "",
+      pointValue: null,
+    });
+  });
+
+  it("rejects an item without its times", async () => {
+    stubFetch(
+      jsonResponse(201, {
+        data: { type: "catalogue-items", id: "12", attributes: { kind: "event", title: "x" } },
+      })
+    );
+    await expect(createEvent({}, "tok")).rejects.toThrow("incomplete item");
+  });
+
+  it("reads the catalogue switch from VITE_CATALOGUE_ENABLED", () => {
+    vi.stubEnv("VITE_CATALOGUE_ENABLED", "true");
+    expect(catalogueEnabled()).toBe(true);
+    vi.stubEnv("VITE_CATALOGUE_ENABLED", "");
+    expect(catalogueEnabled()).toBe(false);
   });
 });
