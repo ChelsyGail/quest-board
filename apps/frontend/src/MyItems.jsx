@@ -3,19 +3,22 @@ import { listMyItems } from "./api.js";
 import { formatItemTime } from "./dates.js";
 import EditItem from "./EditItem.jsx";
 import { itemKindLabel, itemStatusLabel } from "./format.js";
+import ItemParticipants from "./ItemParticipants.jsx";
 
 function byStartTime(a, b) {
   return Date.parse(a.startsAt) - Date.parse(b.startsAt) || Number(a.id) - Number(b.id);
 }
 
 // Organizer page listing their own events and quests (drafts included), from which each
-// one can be edited (FE-14). The backend checks the organizer role on every request.
+// one can be edited (FE-14) or its participants shown (FE-17). The backend checks the
+// organizer role on every request.
 function MyItems({ session, onSessionExpired }) {
   const [items, setItems] = useState([]);
   const [status, setStatus] = useState("loading"); // "loading", "loaded", "error", "forbidden"
   const [loadError, setLoadError] = useState("");
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [editingId, setEditingId] = useState(null);
+  // The item whose edit or participants screen is open: { id, screen } or null.
+  const [opened, setOpened] = useState(null);
   const [actionError, setActionError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -47,8 +50,8 @@ function MyItems({ session, onSessionExpired }) {
     // onSessionExpired is left out on purpose: a new function each render must not reload.
   }, [session.token, loadAttempt]);
 
-  function startEditing(item) {
-    setEditingId(item.id);
+  function open(item, screen) {
+    setOpened({ id: item.id, screen });
     setActionError("");
     setSuccessMessage("");
   }
@@ -57,12 +60,12 @@ function MyItems({ session, onSessionExpired }) {
     setItems((list) =>
       list.map((item) => (item.id === updated.id ? updated : item)).sort(byStartTime)
     );
-    setEditingId(null);
+    setOpened(null);
     setSuccessMessage(`Your changes to "${updated.title}" were saved.`);
   }
 
   function handleDone(message, reload) {
-    setEditingId(null);
+    setOpened(null);
     setActionError(message);
     if (reload) {
       setStatus("loading");
@@ -70,14 +73,24 @@ function MyItems({ session, onSessionExpired }) {
     }
   }
 
-  const editing = items.find((item) => item.id === editingId);
-  if (status === "loaded" && editing) {
+  const openedItem = opened && items.find((item) => item.id === opened.id);
+  if (status === "loaded" && openedItem && opened.screen === "edit") {
     return (
       <EditItem
         session={session}
-        item={editing}
+        item={openedItem}
         onSaved={handleSaved}
         onDone={handleDone}
+        onSessionExpired={onSessionExpired}
+      />
+    );
+  }
+  if (status === "loaded" && openedItem && opened.screen === "participants") {
+    return (
+      <ItemParticipants
+        session={session}
+        item={openedItem}
+        onBack={() => setOpened(null)}
         onSessionExpired={onSessionExpired}
       />
     );
@@ -134,9 +147,17 @@ function MyItems({ session, onSessionExpired }) {
                 type="button"
                 className="button button-secondary button-small"
                 aria-label={`Edit "${item.title}"`}
-                onClick={() => startEditing(item)}
+                onClick={() => open(item, "edit")}
               >
                 Edit
+              </button>
+              <button
+                type="button"
+                className="button button-secondary button-small"
+                aria-label={`Participants of "${item.title}"`}
+                onClick={() => open(item, "participants")}
+              >
+                Participants
               </button>
             </div>
           </li>

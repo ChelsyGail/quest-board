@@ -5,8 +5,10 @@ const ROLE_LABELS = {
   student: "Student",
 };
 
+// Role request and participation statuses.
 const STATUS_LABELS = {
   approved: "Approved",
+  joined: "Joined",
   pending: "Pending approval",
   rejected: "Rejected",
 };

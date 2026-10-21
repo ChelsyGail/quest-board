@@ -348,3 +348,27 @@ export async function updateItem(itemId, changes, token) {
   });
   return readItem(resource);
 }
+
+// Reads a JSON:API "participants" resource: someone who joined an item.
+function readParticipant(resource) {
+  const attributes = resource.attributes || {};
+  if (typeof resource.id !== "string" || typeof attributes.name !== "string") {
+    throw new ApiError("The server returned an incomplete participant.", 200);
+  }
+  return {
+    id: resource.id,
+    userId: attributes.user_id,
+    name: attributes.name,
+    status: attributes.status,
+    joinedAt: attributes.joined_at || "",
+  };
+}
+
+// GET /items/{id}/participants (the item's owner only) -> everyone who joined it.
+export async function listParticipants(itemId, token) {
+  const data = await request(`/items/${encodeURIComponent(itemId)}/participants`, { token });
+  if (!Array.isArray(data)) {
+    throw new ApiError("The server returned an unexpected participant list.", 200);
+  }
+  return data.map(readParticipant);
+}

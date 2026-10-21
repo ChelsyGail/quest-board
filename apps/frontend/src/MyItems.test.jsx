@@ -1,12 +1,17 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, listMyItems, updateItem } from "./api.js";
+import { ApiError, listMyItems, listParticipants, updateItem } from "./api.js";
 import MyItems from "./MyItems.jsx";
 
 vi.mock("./api.js", async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, listMyItems: vi.fn(), updateItem: vi.fn() };
+  return {
+    ...actual,
+    listMyItems: vi.fn(),
+    listParticipants: vi.fn(),
+    updateItem: vi.fn(),
+  };
 });
 
 const SESSION = { token: "org-tok", userId: "7", expiresAt: "2099-01-01T00:00:00Z" };
@@ -257,6 +262,28 @@ describe("Edit item screen (FE-14)", () => {
     const list = screen.getByRole("list");
     expect(within(list).getByText("Board games night")).toBeInTheDocument();
     expect(updateItem).not.toHaveBeenCalled();
+    expect(listMyItems).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Participants from My items (FE-17)", () => {
+  it("opens an item's participants and goes back to the list", async () => {
+    const user = userEvent.setup();
+    listParticipants.mockResolvedValue([
+      { id: "1", userId: "20", name: "Grace", status: "joined", joinedAt: "" },
+    ]);
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: 'Participants of "Campus photo hunt"' })
+    );
+
+    expect(screen.getByRole("heading", { name: "Participants" })).toBeInTheDocument();
+    expect(await screen.findByText("Grace")).toBeInTheDocument();
+    expect(listParticipants).toHaveBeenCalledWith("13", "org-tok");
+
+    await user.click(screen.getByRole("button", { name: "Back to my items" }));
+    expect(screen.getByRole("heading", { name: "My items" })).toBeInTheDocument();
     expect(listMyItems).toHaveBeenCalledTimes(1);
   });
 });
