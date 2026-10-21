@@ -3,6 +3,7 @@ import AdminRoleRequests from "./AdminRoleRequests.jsx";
 import { getCurrentUser } from "./api.js";
 import CreateEvent from "./CreateEvent.jsx";
 import Login from "./Login.jsx";
+import MyItems from "./MyItems.jsx";
 import { pagesFor, resolvePage } from "./navigation.js";
 import Profile from "./Profile.jsx";
 import Signup from "./Signup.jsx";
@@ -195,6 +196,8 @@ function App() {
           </button>
         </>
       );
+    } else if (currentPage.id === "my-items") {
+      body = <MyItems session={session} onSessionExpired={handleSessionRejected} />;
     } else if (currentPage.id === "create-event") {
       body = <CreateEvent session={session} onSessionExpired={handleSessionRejected} />;
     } else if (currentPage.id === "admin") {

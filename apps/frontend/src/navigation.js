@@ -8,6 +8,13 @@ import { catalogueEnabled, roleRequestsEnabled } from "./api.js";
 export const PAGES = [
   { id: "account", label: "Your account" },
   {
+    id: "my-items",
+    label: "My items",
+    roles: ["organizer"],
+    isAvailable: catalogueEnabled,
+    wide: true,
+  },
+  {
     id: "create-event",
     label: "Create event",
     roles: ["organizer"],

@@ -39,7 +39,7 @@ function CreateEvent({ session, onSessionExpired }) {
         // but don't invite a second click that could create a duplicate.
         setFormError(
           `We couldn't confirm whether the event was saved. ${error.message} ` +
-            "Check your items before creating it again."
+            "Check My items before creating it again."
         );
       } else {
         const mapped = formErrorsFrom(error, ITEM_FIELDS);

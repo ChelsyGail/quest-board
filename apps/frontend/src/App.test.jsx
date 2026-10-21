@@ -5,6 +5,7 @@ import {
   ApiError,
   catalogueEnabled,
   getCurrentUser,
+  listMyItems,
   listMyRoleRequests,
   listRoleRequests,
   login,
@@ -18,6 +19,7 @@ vi.mock("./api.js", async (importOriginal) => {
     ...actual,
     catalogueEnabled: vi.fn(),
     getCurrentUser: vi.fn(),
+    listMyItems: vi.fn(),
     listMyRoleRequests: vi.fn(),
     listRoleRequests: vi.fn(),
     login: vi.fn(),
@@ -341,7 +343,7 @@ describe("Role-aware navigation (FE-10)", () => {
   });
 });
 
-describe("Organizer pages (FE-12)", () => {
+describe("Organizer pages (FE-12, FE-14)", () => {
   const ORGANIZER = { ...USER, roles: ["student", "organizer"] };
 
   it("gives organizers a Create event tab with the event form", async () => {
@@ -358,6 +360,20 @@ describe("Organizer pages (FE-12)", () => {
     expect(container.querySelector(".card")).toHaveClass("card-wide");
   });
 
+  it("gives organizers a My items tab", async () => {
+    const user = userEvent.setup();
+    catalogueEnabled.mockReturnValue(true);
+    listMyItems.mockResolvedValue([]);
+    getCurrentUser.mockResolvedValue(ORGANIZER);
+    storeSession();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "My items" }));
+
+    expect(screen.getByRole("heading", { name: "My items" })).toBeInTheDocument();
+    expect(listMyItems).toHaveBeenCalledWith("tok");
+  });
+
   it.each([
     ["a student", USER, true],
     ["an organizer on a backend without the catalogue", ORGANIZER, false],
@@ -369,5 +385,6 @@ describe("Organizer pages (FE-12)", () => {
 
     await screen.findByLabelText("Name");
     expect(screen.queryByRole("button", { name: "Create event" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "My items" })).not.toBeInTheDocument();
   });
 });
