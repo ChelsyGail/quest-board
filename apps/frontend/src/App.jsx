@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import AdminRoleRequests from "./AdminRoleRequests.jsx";
-import { getCurrentUser, roleRequestsEnabled } from "./api.js";
+import { getCurrentUser } from "./api.js";
 import Login from "./Login.jsx";
+import { pagesFor, resolvePage } from "./navigation.js";
 import Profile from "./Profile.jsx";
 import Signup from "./Signup.jsx";
 
@@ -47,7 +48,7 @@ function App() {
   const [profileStatus, setProfileStatus] = useState("loading");
   const [profileError, setProfileError] = useState("");
   const [profileAttempt, setProfileAttempt] = useState(0);
-  const [page, setPage] = useState("account"); // "account" or "admin" when signed in
+  const [page, setPage] = useState("account"); // the requested page ID when signed in
 
   function endSession(message) {
     sessionStorage.removeItem(SESSION_KEY);
@@ -138,6 +139,12 @@ function App() {
     setNotice("");
   }
 
+  // Until the profile has loaded the roles are unknown, so only pages everyone may see
+  // are offered. A page the user can no longer see (e.g. after a refresh removed a role)
+  // falls back to the default page.
+  const pages = pagesFor(profileStatus === "loaded" ? profile.roles : []);
+  const currentPage = session ? resolvePage(pages, page) : null;
+
   let content;
   if (session) {
     content = renderSignedIn();
@@ -160,12 +167,6 @@ function App() {
   }
 
   function renderSignedIn() {
-    // Showing the admin page is only a convenience; the backend checks the admin role
-    // on every admin request.
-    const isAdmin =
-      profileStatus === "loaded" && profile.roles.includes("admin") && roleRequestsEnabled();
-    const currentPage = isAdmin ? page : "account";
-
     const expiresAt = new Date(session.expiresAt).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
@@ -193,7 +194,7 @@ function App() {
           </button>
         </>
       );
-    } else if (currentPage === "admin") {
+    } else if (currentPage.id === "admin") {
       body = (
         <AdminRoleRequests session={session} onSessionExpired={handleSessionRejected} />
       );
@@ -210,24 +211,19 @@ function App() {
 
     return (
       <>
-        {isAdmin && (
+        {pages.length > 1 && (
           <nav className="tabs" aria-label="Pages">
-            <button
-              type="button"
-              className={currentPage === "account" ? "tab active" : "tab"}
-              aria-current={currentPage === "account" ? "page" : undefined}
-              onClick={() => showPage("account")}
-            >
-              Your account
-            </button>
-            <button
-              type="button"
-              className={currentPage === "admin" ? "tab active" : "tab"}
-              aria-current={currentPage === "admin" ? "page" : undefined}
-              onClick={() => showPage("admin")}
-            >
-              Role requests
-            </button>
+            {pages.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={item === currentPage ? "tab active" : "tab"}
+                aria-current={item === currentPage ? "page" : undefined}
+                onClick={() => showPage(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
           </nav>
         )}
 
@@ -249,7 +245,7 @@ function App() {
 
   return (
     <main className="page">
-      <section className={session && page === "admin" ? "card card-wide" : "card"}>
+      <section className={currentPage && currentPage.wide ? "card card-wide" : "card"}>
         <header className="brand">
           <h1>QuestBoard</h1>
           <p className="tagline">Find something to do. Find someone to go with.</p>
