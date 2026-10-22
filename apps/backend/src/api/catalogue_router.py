@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Path
+from fastapi import Query
 from fastapi import status
 from models.catalogue import EventCreate
 from models.catalogue import ItemAttributes
@@ -13,6 +14,7 @@ from models.catalogue import ParticipantAttributes
 from models.catalogue import ParticipantResourceData
 from models.catalogue import QuestCreate
 from models.responses.catalogue import ItemErrorResponse
+from models.responses.catalogue import ItemListResponse
 from models.responses.catalogue import ItemResponse
 from models.responses.catalogue import ParticipantListResponse
 from models.users import UserRole
@@ -21,6 +23,7 @@ from services.catalogue_service import ItemAlreadyPublishedError
 from services.catalogue_service import ItemArchivedError
 from services.catalogue_service import ItemNotFoundError
 from services.catalogue_service import ItemOwnershipError
+from services.catalogue_service import ItemPage
 from services.catalogue_service import ItemRecord
 from services.catalogue_service import ParticipantRecord
 from services.catalogue_service import QuestOnlyFieldError
@@ -31,6 +34,9 @@ from utilities.json_api_errors import json_api_error_response
 from utilities.services import Services
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
 
 CREATE_ERROR_RESPONSES = {
     401: {"model": ItemErrorResponse},
@@ -79,6 +85,26 @@ def setup_catalogue_router(app: FastAPI, services: Services):
     ):
         record = services.catalogue_service.create_quest(current_user.user_id, quest)
         return ItemResponse(data=_to_resource(record))
+
+    @router.get(
+        "/items",
+        response_model=ItemListResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": ItemErrorResponse},
+            422: {"model": ItemErrorResponse},
+        },
+    )
+    def list_published_items(
+        page: int = Query(1, ge=1, description="1-based page number"),
+        page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        result = services.catalogue_service.list_published_items(page, page_size)
+        return ItemListResponse(
+            data=[_to_resource(r) for r in result.items],
+            meta={"page": _page_meta(result)},
+        )
 
     @router.get(
         "/items/me",
@@ -269,6 +295,15 @@ def _to_resource(record: ItemRecord) -> ItemResourceData:
             updated_at=record.updated_at,
         ),
     )
+
+
+def _page_meta(result: ItemPage) -> dict:
+    return {
+        "number": result.page_number,
+        "size": result.page_size,
+        "total_items": result.total_items,
+        "total_pages": result.total_pages,
+    }
 
 
 def _to_participant(record: ParticipantRecord) -> ParticipantResourceData:
