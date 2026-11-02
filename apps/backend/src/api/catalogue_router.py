@@ -1,9 +1,11 @@
 import logging
+from datetime import date
 
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Path
+from fastapi import Query
 from fastapi import status
 from models.catalogue import EventCreate
 from models.catalogue import ItemAttributes
@@ -13,14 +15,19 @@ from models.catalogue import ParticipantAttributes
 from models.catalogue import ParticipantResourceData
 from models.catalogue import QuestCreate
 from models.responses.catalogue import ItemErrorResponse
+from models.responses.catalogue import ItemListResponse
 from models.responses.catalogue import ItemResponse
 from models.responses.catalogue import ParticipantListResponse
 from models.users import UserRole
+from services.catalogue_service import day_end_utc
+from services.catalogue_service import day_start_utc
 from services.catalogue_service import InvalidTimeWindowError
 from services.catalogue_service import ItemAlreadyPublishedError
 from services.catalogue_service import ItemArchivedError
+from services.catalogue_service import ItemFilters
 from services.catalogue_service import ItemNotFoundError
 from services.catalogue_service import ItemOwnershipError
+from services.catalogue_service import ItemPage
 from services.catalogue_service import ItemRecord
 from services.catalogue_service import ParticipantRecord
 from services.catalogue_service import QuestOnlyFieldError
@@ -31,6 +38,12 @@ from utilities.json_api_errors import json_api_error_response
 from utilities.services import Services
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
+
+# The calendar is unpaged, so the window itself is what bounds the response.
+MAX_CALENDAR_DAYS = 366
 
 CREATE_ERROR_RESPONSES = {
     401: {"model": ItemErrorResponse},
@@ -79,6 +92,92 @@ def setup_catalogue_router(app: FastAPI, services: Services):
     ):
         record = services.catalogue_service.create_quest(current_user.user_id, quest)
         return ItemResponse(data=_to_resource(record))
+
+    @router.get(
+        "/items",
+        response_model=ItemListResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": ItemErrorResponse},
+            422: {"model": ItemErrorResponse},
+        },
+    )
+    def list_published_items(
+        page: int = Query(1, ge=1, description="1-based page number"),
+        page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+        q: str
+        | None = Query(
+            None,
+            max_length=200,
+            description="Keyword matched against title and description",
+        ),
+        category: str
+        | None = Query(
+            None,
+            max_length=64,
+            description="Keep only items in this category (academic, social, sports...)",
+        ),
+        from_day: date
+        | None = Query(
+            None,
+            alias="from",
+            description="Keep items still running on this date or later (UTC day)",
+        ),
+        to_day: date
+        | None = Query(
+            None,
+            alias="to",
+            description="Keep items that have started by the end of this date (UTC day)",
+        ),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        if from_day and to_day and to_day < from_day:
+            return _invalid_date_range()
+        result = services.catalogue_service.list_published_items(
+            page, page_size, _filters(q, category, from_day, to_day)
+        )
+        return ItemListResponse(
+            data=[_to_resource(r) for r in result.items],
+            meta={"page": _page_meta(result)},
+        )
+
+    @router.get(
+        "/calendar",
+        response_model=ItemListResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": ItemErrorResponse},
+            422: {"model": ItemErrorResponse},
+        },
+    )
+    def list_calendar_items(
+        from_day: date = Query(
+            ...,
+            alias="from",
+            description="First day of the window (UTC day)",
+        ),
+        to_day: date = Query(
+            ...,
+            alias="to",
+            description="Last day of the window, inclusive (UTC day)",
+        ),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        if to_day < from_day:
+            return _invalid_date_range()
+        if (to_day - from_day).days + 1 > MAX_CALENDAR_DAYS:
+            return _window_too_long()
+
+        records = services.catalogue_service.list_calendar_items(
+            day_start_utc(from_day), day_end_utc(to_day)
+        )
+        return ItemListResponse(
+            data=[_to_resource(record) for record in records],
+            meta={
+                "range": {"from": from_day.isoformat(), "to": to_day.isoformat()},
+                "count": len(records),
+            },
+        )
 
     @router.get(
         "/items/me",
@@ -269,6 +368,52 @@ def _to_resource(record: ItemRecord) -> ItemResourceData:
             updated_at=record.updated_at,
         ),
     )
+
+
+def _filters(
+    q: str | None,
+    category: str | None,
+    from_day: date | None = None,
+    to_day: date | None = None,
+) -> ItemFilters:
+    """A blank or whitespace-only parameter means "no filter", not "match nothing"."""
+    return ItemFilters(
+        keyword=(q or "").strip() or None,
+        category=(category or "").strip() or None,
+        window_start=day_start_utc(from_day) if from_day else None,
+        window_end=day_end_utc(to_day) if to_day else None,
+    )
+
+
+def _window_too_long():
+    return json_api_error_response(
+        ItemErrorResponse,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "window_too_long",
+        "Window too long",
+        f"A calendar window covers at most {MAX_CALENDAR_DAYS} days.",
+        "/query/to",
+    )
+
+
+def _invalid_date_range():
+    return json_api_error_response(
+        ItemErrorResponse,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "invalid_date_range",
+        "Invalid date range",
+        "to must not be earlier than from.",
+        "/query/to",
+    )
+
+
+def _page_meta(result: ItemPage) -> dict:
+    return {
+        "number": result.page_number,
+        "size": result.page_size,
+        "total_items": result.total_items,
+        "total_pages": result.total_pages,
+    }
 
 
 def _to_participant(record: ParticipantRecord) -> ParticipantResourceData:
