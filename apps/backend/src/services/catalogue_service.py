@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date
 from datetime import datetime
 from datetime import timezone
 
@@ -74,6 +75,31 @@ class ItemRecord:
 
 
 @dataclass(frozen=True)
+class ItemPage:
+    """One page of the public catalogue plus the totals the client needs to page."""
+
+    items: list[ItemRecord]
+    page_number: int
+    page_size: int
+    total_items: int
+
+    @property
+    def total_pages(self) -> int:
+        return -(-self.total_items // self.page_size)
+
+
+@dataclass(frozen=True)
+class ItemFilters:
+    """Optional narrowing a student applies on top of the visible catalogue."""
+
+    keyword: str | None = None
+    category: str | None = None
+    # The window the student is free in; an item is kept when it overlaps it.
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+
+
+@dataclass(frozen=True)
 class ParticipantRecord:
     participation_id: int
     user_id: int
@@ -90,6 +116,14 @@ SELECT_ITEM_COLUMNS = """
     FROM catalogue_items
 """
 
+# Published, not archived and not yet over. Matches index_catalogue_items_visible
+# (status, archived_at, starts_at) so the list stays an index range scan (BE-26).
+VISIBLE_UPCOMING_FILTER = """
+    WHERE status = :status
+      AND archived_at IS NULL
+      AND ends_at > :now
+"""
+
 UPDATABLE_FIELDS = (
     "title",
     "description",
@@ -101,6 +135,60 @@ UPDATABLE_FIELDS = (
     "proof_instructions",
     "point_value",
 )
+
+
+def escape_like_pattern(value: str) -> str:
+    """Keeps % and _ typed by a student as plain characters instead of wildcards.
+
+    Backslash is MySQL's default LIKE escape character, so it is escaped first:
+    a literal backslash in the search term then still matches itself.
+    """
+    for character in ("\\", "%", "_"):
+        value = value.replace(character, f"\\{character}")
+    return value
+
+
+def build_filter_clauses(filters: ItemFilters) -> tuple[str, dict]:
+    """Extra WHERE clauses and parameters for the student's filters."""
+    clauses: list[str] = []
+    parameters: dict = {}
+
+    if filters.keyword:
+        # title and description are utf8mb4_0900_ai_ci, so the match ignores case
+        # and accents: a search for "degres" finds "Rue des Degrés".
+        clauses.append("(title LIKE :keyword OR description LIKE :keyword)")
+        parameters["keyword"] = f"%{escape_like_pattern(filters.keyword)}%"
+
+    if filters.category:
+        # One exact category, matched case-insensitively by the same collation
+        # ("Social" finds items filed as "social").
+        clauses.append("category = :category")
+        parameters["category"] = filters.category
+
+    # BE-22: overlap, not containment. An item counts when it is still running
+    # at the start of the window and has already started by the end of it, so a
+    # three-day trip shows up on every day it covers.
+    if filters.window_start:
+        clauses.append("ends_at >= :window_start")
+        parameters["window_start"] = to_utc_naive(filters.window_start)
+
+    if filters.window_end:
+        clauses.append("starts_at <= :window_end")
+        parameters["window_end"] = to_utc_naive(filters.window_end)
+
+    return "".join(f"\n      AND {clause}" for clause in clauses), parameters
+
+
+def day_start_utc(day: date) -> datetime:
+    """Midnight UTC: the date filters work in whole UTC days (see README)."""
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+
+def day_end_utc(day: date) -> datetime:
+    """The last microsecond of the day, so `to` includes everything on that date."""
+    return datetime(
+        day.year, day.month, day.day, 23, 59, 59, 999999, tzinfo=timezone.utc
+    )
 
 
 def to_utc_naive(value: datetime) -> datetime:
@@ -197,6 +285,49 @@ class CatalogueService:
                 {"owner_id": owner_id},
             ).all()
         return [self._to_record(row) for row in rows]
+
+    def list_published_items(
+        self,
+        page_number: int,
+        page_size: int,
+        filters: ItemFilters | None = None,
+        now: datetime | None = None,
+    ) -> ItemPage:
+        """Students' catalogue: published, unarchived items that have not ended yet,
+        soonest first, narrowed by the student's filters. Ties on starts_at are
+        broken by item_id so pages never overlap or skip rows."""
+        narrowing, narrowing_parameters = build_filter_clauses(filters or ItemFilters())
+        where = f"{VISIBLE_UPCOMING_FILTER}{narrowing}"
+        parameters = {
+            "status": ItemStatus.PUBLISHED.value,
+            "now": to_utc_naive(now or datetime.now(timezone.utc)),
+            "limit": page_size,
+            "offset": (page_number - 1) * page_size,
+            **narrowing_parameters,
+        }
+        with self.engine.connect() as connection:
+            total_items = connection.execute(
+                text(f"SELECT COUNT(*) FROM catalogue_items {where}"),
+                parameters,
+            ).scalar_one()
+            rows = connection.execute(
+                text(
+                    f"""
+                    {SELECT_ITEM_COLUMNS}
+                    {where}
+                    ORDER BY starts_at, item_id
+                    LIMIT :limit OFFSET :offset
+                    """
+                ),
+                parameters,
+            ).all()
+
+        return ItemPage(
+            items=[self._to_record(row) for row in rows],
+            page_number=page_number,
+            page_size=page_size,
+            total_items=total_items,
+        )
 
     def update_item(
         self, item_id: int, actor_id: int, update: ItemUpdate
@@ -351,6 +482,6 @@ class CatalogueService:
             status=ItemStatus(row.status),
             published_at=from_utc_naive(row.published_at),
             archived_at=from_utc_naive(row.archived_at),
-            created_at=row.created_at,
-            updated_at=row.updated_at,
+            created_at=from_utc_naive(row.created_at),
+            updated_at=from_utc_naive(row.updated_at),
         )
