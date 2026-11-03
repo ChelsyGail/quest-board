@@ -72,6 +72,40 @@ def setup_participation_router(app: FastAPI, services: Services):
             return _proof_already_submitted()
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    @router.put(
+        "/items/{item_id}/saved",
+        status_code=status.HTTP_204_NO_CONTENT,
+        responses={
+            401: {"model": ParticipationErrorResponse},
+            404: {"model": ParticipationErrorResponse},
+            422: {"model": ParticipationErrorResponse},
+        },
+    )
+    def save_item(
+        item_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        try:
+            services.participation_service.save_item(current_user.user_id, item_id)
+        except ItemNotAvailableError:
+            return _item_not_available()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.delete(
+        "/items/{item_id}/saved",
+        status_code=status.HTTP_204_NO_CONTENT,
+        responses={
+            401: {"model": ParticipationErrorResponse},
+            422: {"model": ParticipationErrorResponse},
+        },
+    )
+    def unsave_item(
+        item_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        services.participation_service.unsave_item(current_user.user_id, item_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     app.include_router(router)
 
 

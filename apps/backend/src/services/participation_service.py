@@ -132,6 +132,42 @@ class ParticipationService:
 
         logger.info("Left item", extra={"user_id": user_id, "item_id": item_id})
 
+    def save_item(self, user_id: int, item_id: int) -> None:
+        """Bookmarks the item without joining it, so the student still gets its
+        reminders. Saving something already saved changes nothing (BE-30)."""
+        logger.info("Saving item", extra={"user_id": user_id, "item_id": item_id})
+        with self.engine.begin() as connection:
+            self._require_visible_item(connection, item_id)
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO saved_events (user_id, item_id)
+                    VALUES (:user_id, :item_id)
+                    ON DUPLICATE KEY UPDATE item_id = item_id
+                    """
+                ),
+                {"user_id": user_id, "item_id": item_id},
+            )
+
+    def unsave_item(self, user_id: int, item_id: int) -> None:
+        """Removes the bookmark.
+
+        Deliberately not checked against item visibility: a student must be able
+        to un-save an item the organizer has since archived. Un-saving something
+        that was never saved is a no-op rather than an error.
+        """
+        logger.info("Un-saving item", extra={"user_id": user_id, "item_id": item_id})
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    DELETE FROM saved_events
+                    WHERE user_id = :user_id AND item_id = :item_id
+                    """
+                ),
+                {"user_id": user_id, "item_id": item_id},
+            )
+
     @staticmethod
     def _require_visible_item(connection, item_id: int) -> None:
         """A student may only act on an item they can see: published, not archived.
