@@ -1,5 +1,6 @@
 import logging
 
+from api.catalogue_router import to_item_attributes
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import FastAPI
@@ -13,12 +14,16 @@ from models.participation import GroupCreate
 from models.participation import GroupMemberAttributes
 from models.participation import GroupMemberResourceData
 from models.participation import GroupResourceData
+from models.participation import MyItemAttributes
+from models.participation import MyItemResourceData
 from models.participation import ParticipationAttributes
 from models.participation import ParticipationResourceData
+from models.participation import ParticipationSummary
 from models.responses.participation import AttendeeListResponse
 from models.responses.participation import GroupErrorResponse
 from models.responses.participation import GroupMemberListResponse
 from models.responses.participation import GroupResponse
+from models.responses.participation import MyItemListResponse
 from models.responses.participation import ParticipationErrorResponse
 from models.responses.participation import ParticipationResponse
 from services.participation_service import AlreadyInAGroupError
@@ -29,6 +34,7 @@ from services.participation_service import GroupMemberRecord
 from services.participation_service import GroupNotFoundError
 from services.participation_service import GroupRecord
 from services.participation_service import ItemNotAvailableError
+from services.participation_service import MyItemRecord
 from services.participation_service import NotAParticipantError
 from services.participation_service import NotAQuestError
 from services.participation_service import NotInGroupError
@@ -278,6 +284,25 @@ def setup_participation_router(app: FastAPI, services: Services):
             meta={"count": len(records)},
         )
 
+    @router.get(
+        "/me/participations",
+        response_model=MyItemListResponse,
+        response_model_exclude_none=True,
+        responses={401: {"model": ParticipationErrorResponse}},
+    )
+    def list_my_participations(
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        records = services.participation_service.list_my_items(current_user.user_id)
+        return MyItemListResponse(
+            data=[_to_my_item(record) for record in records],
+            meta={
+                "count": len(records),
+                "joined_count": sum(1 for r in records if r.participation is not None),
+                "saved_count": sum(1 for r in records if r.saved),
+            },
+        )
+
     app.include_router(router)
 
 
@@ -408,6 +433,26 @@ def _to_group_member(record: GroupMemberRecord) -> GroupMemberResourceData:
     return GroupMemberResourceData(
         id=str(record.user_id),
         attributes=GroupMemberAttributes(name=record.name, joined_at=record.joined_at),
+    )
+
+
+def _to_my_item(record: MyItemRecord) -> MyItemResourceData:
+    participation = record.participation
+    return MyItemResourceData(
+        id=str(record.item.item_id),
+        attributes=MyItemAttributes(
+            **to_item_attributes(record.item).model_dump(),
+            participation=(
+                ParticipationSummary(
+                    participation_id=str(participation.participation_id),
+                    status=participation.status,
+                    joined_at=participation.joined_at,
+                )
+                if participation is not None
+                else None
+            ),
+            saved=record.saved,
+        ),
     )
 
 

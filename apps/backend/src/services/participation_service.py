@@ -10,6 +10,8 @@ from models.catalogue import ItemStatus
 from models.catalogue import ParticipationStatus
 from models.users import AttendanceVisibility
 from services.catalogue_service import from_utc_naive
+from services.catalogue_service import item_record_from_row
+from services.catalogue_service import ItemRecord
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from utilities.settings import DatabaseSettings
@@ -99,6 +101,15 @@ class GroupMemberRecord:
     user_id: int
     name: str
     joined_at: datetime
+
+
+@dataclass(frozen=True)
+class MyItemRecord:
+    """An item on the student's own list, with how they are involved in it."""
+
+    item: ItemRecord
+    participation: ParticipationRecord | None
+    saved: bool
 
 
 SELECT_GROUP_COLUMNS = """
@@ -382,6 +393,54 @@ class ParticipationService:
                 user_id=row.user_id,
                 name=row.name,
                 joined_at=from_utc_naive(row.created_at),
+            )
+            for row in rows
+        ]
+
+    def list_my_items(self, user_id: int) -> list[MyItemRecord]:
+        """Everything the student joined or saved, soonest first.
+
+        One list rather than two: the "My quests" screen (FE-33) shows joined
+        items with their status next to saved ones, and the participation and
+        saved flags say which is which. Archived items stay on the list, because
+        a student's own history should not vanish when an organizer tidies up.
+        """
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT i.*,
+                           p.participation_id,
+                           p.status AS participation_status,
+                           p.created_at AS joined_at,
+                           s.user_id AS saved_by
+                    FROM catalogue_items AS i
+                    LEFT JOIN participations AS p
+                           ON p.item_id = i.item_id AND p.user_id = :user_id
+                    LEFT JOIN saved_events AS s
+                           ON s.item_id = i.item_id AND s.user_id = :user_id
+                    WHERE p.participation_id IS NOT NULL OR s.user_id IS NOT NULL
+                    ORDER BY i.starts_at, i.item_id
+                    """
+                ),
+                {"user_id": user_id},
+            ).all()
+
+        return [
+            MyItemRecord(
+                item=item_record_from_row(row),
+                participation=(
+                    ParticipationRecord(
+                        participation_id=row.participation_id,
+                        user_id=user_id,
+                        item_id=row.item_id,
+                        status=ParticipationStatus(row.participation_status),
+                        joined_at=from_utc_naive(row.joined_at),
+                    )
+                    if row.participation_id is not None
+                    else None
+                ),
+                saved=row.saved_by is not None,
             )
             for row in rows
         ]

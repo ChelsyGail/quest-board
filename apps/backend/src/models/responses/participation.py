@@ -1,6 +1,7 @@
 from models.participation import AttendeeResourceData
 from models.participation import GroupMemberResourceData
 from models.participation import GroupResourceData
+from models.participation import MyItemResourceData
 from models.participation import ParticipationResourceData
 from models.responses.json_api import JsonApiResponse
 
@@ -26,4 +27,8 @@ class GroupErrorResponse(JsonApiResponse[GroupResourceData]):
 
 
 class GroupMemberListResponse(JsonApiResponse[GroupMemberResourceData]):
+    pass
+
+
+class MyItemListResponse(JsonApiResponse[MyItemResourceData]):
     pass

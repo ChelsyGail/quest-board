@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Annotated
 from typing import Literal
 
+from models.catalogue import ItemAttributes
 from models.catalogue import ParticipationStatus
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -72,3 +73,28 @@ class GroupMemberResourceData(BaseModel):
     type: Literal["group-members"] = "group-members"
     id: str
     attributes: GroupMemberAttributes
+
+
+class ParticipationSummary(BaseModel):
+    """What the student's own participation adds to an item on their list."""
+
+    participation_id: str
+    status: ParticipationStatus
+    # Null until twists (BE-26) are built, like ParticipationAttributes.twist.
+    twist: str | None = None
+    joined_at: datetime
+
+
+class MyItemAttributes(ItemAttributes):
+    """A catalogue item plus this student's relationship to it: joined, saved or
+    both. The item fields are the same ones the catalogue returns, so the app can
+    reuse its item card."""
+
+    participation: ParticipationSummary | None = None
+    saved: bool = False
+
+
+class MyItemResourceData(BaseModel):
+    type: Literal["my-items"] = "my-items"
+    id: str
+    attributes: MyItemAttributes
