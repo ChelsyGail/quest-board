@@ -7,6 +7,7 @@ from datetime import datetime
 from database.connection import create_database_engine
 from models.catalogue import ItemStatus
 from models.catalogue import ParticipationStatus
+from models.users import AttendanceVisibility
 from services.catalogue_service import from_utc_naive
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +39,24 @@ class ParticipationRecord:
     item_id: int
     status: ParticipationStatus
     joined_at: datetime
+
+
+@dataclass(frozen=True)
+class AttendeeRecord:
+    participation_id: int
+    name: str
+
+
+@dataclass(frozen=True)
+class AttendeeList:
+    """Named attendees plus a count of the ones who chose to stay hidden."""
+
+    attendees: list[AttendeeRecord]
+    hidden_count: int
+
+    @property
+    def total_count(self) -> int:
+        return len(self.attendees) + self.hidden_count
 
 
 SELECT_PARTICIPATION_COLUMNS = """
@@ -167,6 +186,35 @@ class ParticipationService:
                 ),
                 {"user_id": user_id, "item_id": item_id},
             )
+
+    def list_attendees(self, item_id: int) -> AttendeeList:
+        """Who else is coming, so a student does not have to turn up alone.
+
+        Students whose visibility is 'hidden' are counted but not named, and the
+        query selects no email at all: there is no payload shape in which one
+        could leak (BE-32).
+        """
+        with self.engine.connect() as connection:
+            self._require_visible_item(connection, item_id)
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT p.participation_id, u.name, u.attendance_visibility
+                    FROM participations AS p
+                    JOIN users AS u ON u.user_id = p.user_id
+                    WHERE p.item_id = :item_id AND u.deleted_at IS NULL
+                    ORDER BY p.created_at, p.participation_id
+                    """
+                ),
+                {"item_id": item_id},
+            ).all()
+
+        named = [
+            AttendeeRecord(participation_id=row.participation_id, name=row.name)
+            for row in rows
+            if row.attendance_visibility == AttendanceVisibility.VISIBLE.value
+        ]
+        return AttendeeList(attendees=named, hidden_count=len(rows) - len(named))
 
     @staticmethod
     def _require_visible_item(connection, item_id: int) -> None:

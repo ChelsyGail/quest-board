@@ -6,11 +6,15 @@ from fastapi import FastAPI
 from fastapi import Path
 from fastapi import Response
 from fastapi import status
+from models.participation import AttendeeAttributes
+from models.participation import AttendeeResourceData
 from models.participation import ParticipationAttributes
 from models.participation import ParticipationResourceData
+from models.responses.participation import AttendeeListResponse
 from models.responses.participation import ParticipationErrorResponse
 from models.responses.participation import ParticipationResponse
 from services.participation_service import AlreadyJoinedError
+from services.participation_service import AttendeeRecord
 from services.participation_service import ItemNotAvailableError
 from services.participation_service import NotJoinedError
 from services.participation_service import ParticipationLockedError
@@ -106,6 +110,33 @@ def setup_participation_router(app: FastAPI, services: Services):
         services.participation_service.unsave_item(current_user.user_id, item_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    @router.get(
+        "/items/{item_id}/attendees",
+        response_model=AttendeeListResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": ParticipationErrorResponse},
+            404: {"model": ParticipationErrorResponse},
+            422: {"model": ParticipationErrorResponse},
+        },
+    )
+    def list_attendees(
+        item_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        try:
+            result = services.participation_service.list_attendees(item_id)
+        except ItemNotAvailableError:
+            return _item_not_available()
+        return AttendeeListResponse(
+            data=[_to_attendee(attendee) for attendee in result.attendees],
+            meta={
+                "visible_count": len(result.attendees),
+                "hidden_count": result.hidden_count,
+                "total_count": result.total_count,
+            },
+        )
+
     app.include_router(router)
 
 
@@ -150,6 +181,13 @@ def _proof_already_submitted():
         "Proof already submitted",
         "You cannot leave an item you have already submitted proof for.",
         "/item_id",
+    )
+
+
+def _to_attendee(record: AttendeeRecord) -> AttendeeResourceData:
+    return AttendeeResourceData(
+        id=str(record.participation_id),
+        attributes=AttendeeAttributes(name=record.name),
     )
 
 
