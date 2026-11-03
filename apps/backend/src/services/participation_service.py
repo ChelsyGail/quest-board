@@ -23,6 +23,14 @@ class AlreadyJoinedError(Exception):
     """The student already has a participation for this item (BE-28)."""
 
 
+class NotJoinedError(Exception):
+    """The student has no participation for this item."""
+
+
+class ParticipationLockedError(Exception):
+    """The attempt has moved past Joined, so leaving would discard its history."""
+
+
 @dataclass(frozen=True)
 class ParticipationRecord:
     participation_id: int
@@ -83,6 +91,46 @@ class ParticipationService:
             extra={"participation_id": row.participation_id, "item_id": item_id},
         )
         return self._to_record(row)
+
+    def leave_item(self, user_id: int, item_id: int) -> None:
+        """Drops the student's participation so their plans and reminders match.
+
+        Refused once the participation has moved past Joined: Pending, Approved
+        and Rejected all mean proof was submitted, and that history has to
+        survive (BE-31). When the submissions table lands with the proof
+        tickets, this check becomes "a submission exists for this attempt".
+        """
+        logger.info("Leaving item", extra={"user_id": user_id, "item_id": item_id})
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    f"""{SELECT_PARTICIPATION_COLUMNS}
+                    WHERE user_id = :user_id AND item_id = :item_id
+                    FOR UPDATE
+                    """
+                ),
+                {"user_id": user_id, "item_id": item_id},
+            ).one_or_none()
+            if row is None:
+                raise NotJoinedError
+            if row.status != ParticipationStatus.JOINED.value:
+                logger.info(
+                    "Refused to leave an item with proof behind it",
+                    extra={
+                        "participation_id": row.participation_id,
+                        "status": row.status,
+                    },
+                )
+                raise ParticipationLockedError
+
+            connection.execute(
+                text(
+                    "DELETE FROM participations WHERE participation_id = :participation_id"
+                ),
+                {"participation_id": row.participation_id},
+            )
+
+        logger.info("Left item", extra={"user_id": user_id, "item_id": item_id})
 
     @staticmethod
     def _require_visible_item(connection, item_id: int) -> None:
