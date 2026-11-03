@@ -19,6 +19,13 @@ UserEmail = Annotated[EmailStr, Field(max_length=255)]
 Password = Annotated[str, StringConstraints(min_length=12, max_length=128)]
 
 
+class AttendanceVisibility(StrEnum):
+    """Whether the student is named in attendee lists, or only counted (BE-33)."""
+
+    VISIBLE = "visible"
+    HIDDEN = "hidden"
+
+
 class UserRole(StrEnum):
     ADMIN = "admin"  # will approve role requests
     STUDENT = "student"  # do quests
@@ -46,6 +53,7 @@ class UserUpdate(BaseModel):
     email: UserEmail | None = None
     name: UserName | None = None
     password: Password | None = None
+    attendance_visibility: AttendanceVisibility | None = None
     # roles: set[UserRole] | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
@@ -61,6 +69,7 @@ class UserAttributes(BaseModel):
     email: EmailStr
     name: str
     roles: list[UserRole]
+    attendance_visibility: AttendanceVisibility
     created_at: datetime
     updated_at: datetime
 
