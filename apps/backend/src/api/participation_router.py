@@ -8,14 +8,30 @@ from fastapi import Response
 from fastapi import status
 from models.participation import AttendeeAttributes
 from models.participation import AttendeeResourceData
+from models.participation import GroupAttributes
+from models.participation import GroupCreate
+from models.participation import GroupMemberAttributes
+from models.participation import GroupMemberResourceData
+from models.participation import GroupResourceData
 from models.participation import ParticipationAttributes
 from models.participation import ParticipationResourceData
 from models.responses.participation import AttendeeListResponse
+from models.responses.participation import GroupErrorResponse
+from models.responses.participation import GroupMemberListResponse
+from models.responses.participation import GroupResponse
 from models.responses.participation import ParticipationErrorResponse
 from models.responses.participation import ParticipationResponse
+from services.participation_service import AlreadyInAGroupError
 from services.participation_service import AlreadyJoinedError
 from services.participation_service import AttendeeRecord
+from services.participation_service import DuplicateGroupNameError
+from services.participation_service import GroupMemberRecord
+from services.participation_service import GroupNotFoundError
+from services.participation_service import GroupRecord
 from services.participation_service import ItemNotAvailableError
+from services.participation_service import NotAParticipantError
+from services.participation_service import NotAQuestError
+from services.participation_service import NotInGroupError
 from services.participation_service import NotJoinedError
 from services.participation_service import ParticipationLockedError
 from services.participation_service import ParticipationRecord
@@ -25,6 +41,14 @@ from utilities.json_api_errors import json_api_error_response
 from utilities.services import Services
 
 logger = logging.getLogger(__name__)
+
+GROUP_ERROR_RESPONSES = {
+    401: {"model": GroupErrorResponse},
+    403: {"model": GroupErrorResponse},
+    404: {"model": GroupErrorResponse},
+    409: {"model": GroupErrorResponse},
+    422: {"model": GroupErrorResponse},
+}
 
 JOIN_ERROR_RESPONSES = {
     401: {"model": ParticipationErrorResponse},
@@ -137,6 +161,123 @@ def setup_participation_router(app: FastAPI, services: Services):
             },
         )
 
+    @router.post(
+        "/items/{item_id}/groups",
+        response_model=GroupResponse,
+        response_model_exclude_none=True,
+        status_code=status.HTTP_201_CREATED,
+        responses=GROUP_ERROR_RESPONSES,
+    )
+    def create_group(
+        item_id: int = Path(gt=0),
+        *,
+        group: GroupCreate,
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        try:
+            record = services.participation_service.create_group(
+                current_user.user_id, item_id, group.name
+            )
+        except ItemNotAvailableError:
+            return _item_not_available()
+        except NotAQuestError:
+            return _not_a_quest()
+        except NotAParticipantError:
+            return _not_a_participant()
+        except AlreadyInAGroupError:
+            return _already_in_a_group()
+        except DuplicateGroupNameError:
+            return _group_name_taken()
+        return GroupResponse(data=_to_group(record))
+
+    @router.get(
+        "/items/{item_id}/groups",
+        response_model=GroupResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": GroupErrorResponse},
+            404: {"model": GroupErrorResponse},
+            422: {"model": GroupErrorResponse},
+        },
+    )
+    def list_groups(
+        item_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        try:
+            records = services.participation_service.list_groups(item_id)
+        except ItemNotAvailableError:
+            return _item_not_available()
+        except NotAQuestError:
+            return _not_a_quest()
+        return GroupResponse(
+            data=[_to_group(record) for record in records],
+            meta={"count": len(records)},
+        )
+
+    @router.post(
+        "/groups/{group_id}/members",
+        status_code=status.HTTP_204_NO_CONTENT,
+        responses=GROUP_ERROR_RESPONSES,
+    )
+    def join_group(
+        group_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        try:
+            services.participation_service.join_group(current_user.user_id, group_id)
+        except GroupNotFoundError:
+            return _group_not_found()
+        except ItemNotAvailableError:
+            return _item_not_available()
+        except NotAQuestError:
+            return _not_a_quest()
+        except NotAParticipantError:
+            return _not_a_participant()
+        except AlreadyInAGroupError:
+            return _already_in_a_group()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.delete(
+        "/groups/{group_id}/members/me",
+        status_code=status.HTTP_204_NO_CONTENT,
+        responses=GROUP_ERROR_RESPONSES,
+    )
+    def leave_group(
+        group_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        try:
+            services.participation_service.leave_group(current_user.user_id, group_id)
+        except GroupNotFoundError:
+            return _group_not_found()
+        except NotInGroupError:
+            return _not_in_group()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.get(
+        "/groups/{group_id}/members",
+        response_model=GroupMemberListResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": GroupErrorResponse},
+            404: {"model": GroupErrorResponse},
+            422: {"model": GroupErrorResponse},
+        },
+    )
+    def list_group_members(
+        group_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        try:
+            records = services.participation_service.list_group_members(group_id)
+        except GroupNotFoundError:
+            return _group_not_found()
+        return GroupMemberListResponse(
+            data=[_to_group_member(record) for record in records],
+            meta={"count": len(records)},
+        )
+
     app.include_router(router)
 
 
@@ -181,6 +322,92 @@ def _proof_already_submitted():
         "Proof already submitted",
         "You cannot leave an item you have already submitted proof for.",
         "/item_id",
+    )
+
+
+def _not_a_quest():
+    return json_api_error_response(
+        GroupErrorResponse,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "groups_are_quest_only",
+        "Groups are for quests",
+        "Only quests have groups; events have an attendee list.",
+        "/item_id",
+    )
+
+
+def _not_a_participant():
+    return json_api_error_response(
+        GroupErrorResponse,
+        status.HTTP_403_FORBIDDEN,
+        "not_a_participant",
+        "Not a participant",
+        "Join the quest before creating or joining one of its groups.",
+        "/item_id",
+    )
+
+
+def _already_in_a_group():
+    return json_api_error_response(
+        GroupErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "already_in_a_group",
+        "Already in a group",
+        "You are already in a group for this quest. Leave it first.",
+        "/item_id",
+    )
+
+
+def _group_name_taken():
+    return json_api_error_response(
+        GroupErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "group_name_taken",
+        "Group name taken",
+        "Another group on this quest already has that name.",
+        "/name",
+    )
+
+
+def _group_not_found():
+    return json_api_error_response(
+        GroupErrorResponse,
+        status.HTTP_404_NOT_FOUND,
+        "group_not_found",
+        "Group not found",
+        "The group does not exist.",
+        "/group_id",
+    )
+
+
+def _not_in_group():
+    return json_api_error_response(
+        GroupErrorResponse,
+        status.HTTP_404_NOT_FOUND,
+        "not_in_group",
+        "Not in this group",
+        "You are not a member of this group.",
+        "/group_id",
+    )
+
+
+def _to_group(record: GroupRecord) -> GroupResourceData:
+    return GroupResourceData(
+        id=str(record.group_id),
+        attributes=GroupAttributes(
+            item_id=str(record.item_id),
+            name=record.name,
+            created_by=str(record.created_by),
+            member_count=record.member_count,
+            created_at=record.created_at,
+        ),
+    )
+
+
+def _to_group_member(record: GroupMemberRecord) -> GroupMemberResourceData:
+    return GroupMemberResourceData(
+        id=str(record.user_id),
+        attributes=GroupMemberAttributes(name=record.name, joined_at=record.joined_at),
     )
 
 

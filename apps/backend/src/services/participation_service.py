@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from database.connection import create_database_engine
+from models.catalogue import ItemKind
 from models.catalogue import ItemStatus
 from models.catalogue import ParticipationStatus
 from models.users import AttendanceVisibility
@@ -30,6 +31,30 @@ class NotJoinedError(Exception):
 
 class ParticipationLockedError(Exception):
     """The attempt has moved past Joined, so leaving would discard its history."""
+
+
+class NotAQuestError(Exception):
+    """Groups are a quest thing; events only have attendees (BE-34)."""
+
+
+class NotAParticipantError(Exception):
+    """Only students who joined the quest may create or join its groups."""
+
+
+class GroupNotFoundError(Exception):
+    pass
+
+
+class NotInGroupError(Exception):
+    pass
+
+
+class DuplicateGroupNameError(Exception):
+    """Another group on this quest already has that name."""
+
+
+class AlreadyInAGroupError(Exception):
+    """A student belongs to at most one group per quest."""
 
 
 @dataclass(frozen=True)
@@ -58,6 +83,30 @@ class AttendeeList:
     def total_count(self) -> int:
         return len(self.attendees) + self.hidden_count
 
+
+@dataclass(frozen=True)
+class GroupRecord:
+    group_id: int
+    item_id: int
+    name: str
+    created_by: int
+    member_count: int
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class GroupMemberRecord:
+    user_id: int
+    name: str
+    joined_at: datetime
+
+
+SELECT_GROUP_COLUMNS = """
+    SELECT g.group_id, g.item_id, g.name, g.created_by, g.created_at,
+           (SELECT COUNT(*) FROM group_members AS m WHERE m.group_id = g.group_id)
+               AS member_count
+    FROM quest_groups AS g
+"""
 
 SELECT_PARTICIPATION_COLUMNS = """
     SELECT participation_id, user_id, item_id, status, created_at
@@ -215,6 +264,209 @@ class ParticipationService:
             if row.attendance_visibility == AttendanceVisibility.VISIBLE.value
         ]
         return AttendeeList(attendees=named, hidden_count=len(rows) - len(named))
+
+    def create_group(self, user_id: int, item_id: int, name: str) -> GroupRecord:
+        """Starts a group on a quest the student has joined, with them in it."""
+        logger.info(
+            "Creating quest group", extra={"user_id": user_id, "item_id": item_id}
+        )
+        with self.engine.begin() as connection:
+            self._require_quest(connection, item_id)
+            self._require_participant(connection, user_id, item_id)
+            if self._current_group_id(connection, user_id, item_id) is not None:
+                raise AlreadyInAGroupError
+
+            try:
+                result = connection.execute(
+                    text(
+                        """
+                        INSERT INTO quest_groups (item_id, name, created_by)
+                        VALUES (:item_id, :name, :user_id)
+                        """
+                    ),
+                    {"item_id": item_id, "name": name, "user_id": user_id},
+                )
+            except IntegrityError as error:
+                # unique_quest_groups_name
+                raise DuplicateGroupNameError from error
+
+            group_id = result.lastrowid
+            self._insert_member(connection, group_id, item_id, user_id)
+            row = self._load_group(connection, group_id)
+
+        logger.info("Created quest group", extra={"group_id": group_id})
+        return self._to_group(row)
+
+    def list_groups(self, item_id: int) -> list[GroupRecord]:
+        """The groups on a quest, oldest first, so a student can pick one."""
+        with self.engine.connect() as connection:
+            self._require_quest(connection, item_id)
+            rows = connection.execute(
+                text(
+                    f"""{SELECT_GROUP_COLUMNS}
+                    WHERE g.item_id = :item_id
+                    ORDER BY g.created_at, g.group_id
+                    """
+                ),
+                {"item_id": item_id},
+            ).all()
+        return [self._to_group(row) for row in rows]
+
+    def join_group(self, user_id: int, group_id: int) -> None:
+        """Joins an existing group. Joining the group twice changes nothing."""
+        logger.info(
+            "Joining quest group", extra={"user_id": user_id, "group_id": group_id}
+        )
+        with self.engine.begin() as connection:
+            group = self._lock_group(connection, group_id)
+            self._require_quest(connection, group.item_id)
+            self._require_participant(connection, user_id, group.item_id)
+
+            current = self._current_group_id(connection, user_id, group.item_id)
+            if current == group_id:
+                return
+            if current is not None:
+                raise AlreadyInAGroupError
+
+            self._insert_member(connection, group_id, group.item_id, user_id)
+
+    def leave_group(self, user_id: int, group_id: int) -> None:
+        """Leaves a group, and closes it when the last member walks out, so
+        abandoned groups do not clutter the quest."""
+        logger.info(
+            "Leaving quest group", extra={"user_id": user_id, "group_id": group_id}
+        )
+        with self.engine.begin() as connection:
+            self._lock_group(connection, group_id)
+            removed = connection.execute(
+                text(
+                    """
+                    DELETE FROM group_members
+                    WHERE group_id = :group_id AND user_id = :user_id
+                    """
+                ),
+                {"group_id": group_id, "user_id": user_id},
+            ).rowcount
+            if removed == 0:
+                raise NotInGroupError
+
+            remaining = connection.execute(
+                text("SELECT COUNT(*) FROM group_members WHERE group_id = :group_id"),
+                {"group_id": group_id},
+            ).scalar_one()
+            if remaining == 0:
+                logger.info("Closing empty quest group", extra={"group_id": group_id})
+                connection.execute(
+                    text("DELETE FROM quest_groups WHERE group_id = :group_id"),
+                    {"group_id": group_id},
+                )
+
+    def list_group_members(self, group_id: int) -> list[GroupMemberRecord]:
+        """Who is in the group. Names only, in the order they joined."""
+        with self.engine.connect() as connection:
+            self._load_group(connection, group_id)
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT m.user_id, u.name, m.created_at
+                    FROM group_members AS m
+                    JOIN users AS u ON u.user_id = m.user_id
+                    WHERE m.group_id = :group_id AND u.deleted_at IS NULL
+                    ORDER BY m.created_at, m.user_id
+                    """
+                ),
+                {"group_id": group_id},
+            ).all()
+        return [
+            GroupMemberRecord(
+                user_id=row.user_id,
+                name=row.name,
+                joined_at=from_utc_naive(row.created_at),
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _insert_member(connection, group_id: int, item_id: int, user_id: int) -> None:
+        connection.execute(
+            text(
+                """
+                INSERT INTO group_members (group_id, item_id, user_id)
+                VALUES (:group_id, :item_id, :user_id)
+                """
+            ),
+            {"group_id": group_id, "item_id": item_id, "user_id": user_id},
+        )
+
+    @staticmethod
+    def _current_group_id(connection, user_id: int, item_id: int) -> int | None:
+        """The group this student is already in for this quest, if any."""
+        return connection.execute(
+            text(
+                """
+                SELECT group_id FROM group_members
+                WHERE user_id = :user_id AND item_id = :item_id
+                """
+            ),
+            {"user_id": user_id, "item_id": item_id},
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _require_participant(connection, user_id: int, item_id: int) -> None:
+        participation = connection.execute(
+            text(
+                """
+                SELECT participation_id FROM participations
+                WHERE user_id = :user_id AND item_id = :item_id
+                """
+            ),
+            {"user_id": user_id, "item_id": item_id},
+        ).one_or_none()
+        if participation is None:
+            raise NotAParticipantError
+
+    def _require_quest(self, connection, item_id: int) -> None:
+        self._require_visible_item(connection, item_id)
+        kind = connection.execute(
+            text("SELECT kind FROM catalogue_items WHERE item_id = :item_id"),
+            {"item_id": item_id},
+        ).scalar_one()
+        if kind != ItemKind.QUEST.value:
+            raise NotAQuestError
+
+    @staticmethod
+    def _lock_group(connection, group_id: int):
+        row = connection.execute(
+            text(
+                "SELECT group_id, item_id FROM quest_groups "
+                "WHERE group_id = :group_id FOR UPDATE"
+            ),
+            {"group_id": group_id},
+        ).one_or_none()
+        if row is None:
+            raise GroupNotFoundError
+        return row
+
+    @staticmethod
+    def _load_group(connection, group_id: int):
+        row = connection.execute(
+            text(f"{SELECT_GROUP_COLUMNS} WHERE g.group_id = :group_id"),
+            {"group_id": group_id},
+        ).one_or_none()
+        if row is None:
+            raise GroupNotFoundError
+        return row
+
+    @staticmethod
+    def _to_group(row) -> GroupRecord:
+        return GroupRecord(
+            group_id=row.group_id,
+            item_id=row.item_id,
+            name=row.name,
+            created_by=row.created_by,
+            member_count=row.member_count,
+            created_at=from_utc_naive(row.created_at),
+        )
 
     @staticmethod
     def _require_visible_item(connection, item_id: int) -> None:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 from typing import Literal
 
 from models.catalogue import ParticipationStatus
 from pydantic import BaseModel
+from pydantic import ConfigDict
+from pydantic import StringConstraints
 
 
 class ParticipationAttributes(BaseModel):
@@ -33,3 +36,39 @@ class AttendeeResourceData(BaseModel):
     type: Literal["attendees"] = "attendees"
     id: str
     attributes: AttendeeAttributes
+
+
+GroupName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+]
+
+
+class GroupCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: GroupName
+
+
+class GroupAttributes(BaseModel):
+    item_id: str
+    name: str
+    created_by: str
+    member_count: int
+    created_at: datetime
+
+
+class GroupResourceData(BaseModel):
+    type: Literal["quest-groups"] = "quest-groups"
+    id: str
+    attributes: GroupAttributes
+
+
+class GroupMemberAttributes(BaseModel):
+    name: str
+    joined_at: datetime
+
+
+class GroupMemberResourceData(BaseModel):
+    type: Literal["group-members"] = "group-members"
+    id: str
+    attributes: GroupMemberAttributes
