@@ -127,6 +127,7 @@ def _to_resource(user: UserRecord) -> UserResourceData:
             email=user.email,
             name=user.name,
             roles=list(user.roles),
+            attendance_visibility=user.attendance_visibility,
             created_at=user.created_at,
             updated_at=user.updated_at,
         ),
