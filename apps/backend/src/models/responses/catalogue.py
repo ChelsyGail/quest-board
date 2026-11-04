@@ -13,3 +13,7 @@ class ItemErrorResponse(JsonApiResponse[ItemResourceData]):
 
 class ParticipantListResponse(JsonApiResponse[ParticipantResourceData]):
     pass
+
+
+class ItemListResponse(JsonApiResponse[ItemResourceData]):
+    pass
