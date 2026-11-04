@@ -10,6 +10,10 @@ import {
   listMyQuests,
   listMyRoleRequests,
   listPublishedQuests,
+  catalogueEnabled,
+  createEvent,
+  listMyItems,
+  listParticipants,
   listRoleRequests,
   publishQuest,
   questApiUnavailableMessage,
@@ -18,6 +22,7 @@ import {
   registerUser,
   reviewRoleRequest,
   roleRequestsEnabled,
+  updateItem,
   updateUser,
 } from "./api.js";
 
@@ -271,6 +276,170 @@ describe("api client", () => {
       "email",
     ]);
     expect(extra).toEqual({ fieldErrors: {}, formError: "Roles: Extra inputs" });
+  });
+
+  it("creates an event with POST /events and reads the item", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(201, {
+        data: {
+          type: "catalogue-items",
+          id: "12",
+          attributes: {
+            kind: "event",
+            owner_id: "7",
+            title: "Board games night",
+            description: "Bring a game.",
+            location: "Student lounge",
+            starts_at: "2026-11-01T17:30:00Z",
+            ends_at: "2026-11-01T20:00:00Z",
+            time_zone: "Europe/Paris",
+            category: "Games",
+            status: "draft",
+            created_at: "2026-10-21T10:00:00Z",
+            updated_at: "2026-10-21T10:00:00Z",
+          },
+        },
+      })
+    );
+    const event = {
+      title: "Board games night",
+      description: "Bring a game.",
+      location: "Student lounge",
+      starts_at: "2026-11-01T17:30:00.000Z",
+      ends_at: "2026-11-01T20:00:00.000Z",
+      time_zone: "Europe/Paris",
+      category: "Games",
+    };
+
+    const item = await createEvent(event, "org-tok");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://api.test/events");
+    expect(options.method).toBe("POST");
+    expect(options.headers.Authorization).toBe("Bearer org-tok");
+    expect(JSON.parse(options.body)).toEqual(event);
+    expect(item).toMatchObject({
+      id: "12",
+      kind: "event",
+      title: "Board games night",
+      startsAt: "2026-11-01T17:30:00Z",
+      timeZone: "Europe/Paris",
+      status: "draft",
+      proofInstructions: "",
+      pointValue: null,
+    });
+  });
+
+  it("rejects an item without its times", async () => {
+    stubFetch(
+      jsonResponse(201, {
+        data: { type: "catalogue-items", id: "12", attributes: { kind: "event", title: "x" } },
+      })
+    );
+    await expect(createEvent({}, "tok")).rejects.toThrow("incomplete item");
+  });
+
+  it("reads the catalogue switch from VITE_CATALOGUE_ENABLED", () => {
+    vi.stubEnv("VITE_CATALOGUE_ENABLED", "true");
+    expect(catalogueEnabled()).toBe(true);
+    vi.stubEnv("VITE_CATALOGUE_ENABLED", "");
+    expect(catalogueEnabled()).toBe(false);
+  });
+
+  it("lists the organizer's items from GET /items/me", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(200, {
+        data: [
+          {
+            type: "catalogue-items",
+            id: "13",
+            attributes: {
+              kind: "quest",
+              title: "Campus photo hunt",
+              starts_at: "2026-11-05T09:00:00Z",
+              ends_at: "2026-11-05T17:00:00Z",
+              time_zone: "Europe/Paris",
+              proof_instructions: "Upload five photos.",
+              point_value: 50,
+              status: "published",
+            },
+          },
+        ],
+      })
+    );
+
+    const items = await listMyItems("org-tok");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/items/me");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: "13",
+      kind: "quest",
+      proofInstructions: "Upload five photos.",
+      pointValue: 50,
+    });
+  });
+
+  it("sends only the given changes in PATCH /items/{id}", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(200, {
+        data: {
+          type: "catalogue-items",
+          id: "12",
+          attributes: {
+            kind: "event",
+            title: "Chess night",
+            starts_at: "2026-11-01T17:30:00Z",
+            ends_at: "2026-11-01T20:00:00Z",
+            time_zone: "Europe/Paris",
+            status: "draft",
+          },
+        },
+      })
+    );
+
+    const updated = await updateItem("12", { title: "Chess night" }, "org-tok");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://api.test/items/12");
+    expect(options.method).toBe("PATCH");
+    expect(JSON.parse(options.body)).toEqual({ title: "Chess night" });
+    expect(updated.title).toBe("Chess night");
+  });
+
+  it("lists an item's participants from GET /items/{id}/participants", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(200, {
+        data: [
+          {
+            type: "participants",
+            id: "1",
+            attributes: {
+              user_id: "20",
+              name: "Grace",
+              status: "joined",
+              joined_at: "2026-10-20T08:15:00Z",
+            },
+          },
+        ],
+        meta: { count: 1 },
+      })
+    );
+
+    const participants = await listParticipants("12", "org-tok");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://api.test/items/12/participants");
+    expect(options.headers.Authorization).toBe("Bearer org-tok");
+    expect(participants).toEqual([
+      {
+        id: "1",
+        userId: "20",
+        name: "Grace",
+        status: "joined",
+        joinedAt: "2026-10-20T08:15:00Z",
+      },
+    ]);
   });
 });
 

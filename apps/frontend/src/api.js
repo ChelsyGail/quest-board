@@ -25,6 +25,14 @@ export const PASSWORD_MIN_LENGTH = 12;
 export const PASSWORD_MAX_LENGTH = 128;
 export const REASON_MAX_LENGTH = 500;
 
+export const ITEM_TITLE_MAX_LENGTH = 200;
+export const ITEM_DESCRIPTION_MAX_LENGTH = 5000;
+export const ITEM_LOCATION_MAX_LENGTH = 255;
+export const ITEM_CATEGORY_MAX_LENGTH = 64;
+export const PROOF_INSTRUCTIONS_MAX_LENGTH = 5000;
+export const POINT_VALUE_MIN = 1;
+export const POINT_VALUE_MAX = 10000;
+
 export const REQUESTABLE_ROLES = ["organizer", "moderator"];
 export const ROLE_REQUEST_STATUSES = ["pending", "approved", "rejected"];
 
@@ -54,6 +62,11 @@ export const QUEST_POINTS_MIN = 1;
 export const QUEST_POINTS_MAX = 10000;
 export const QUEST_TIME_ZONE_MAX_LENGTH = 64;
 export const DEFAULT_QUEST_TIME_ZONE = "Europe/Paris";
+
+// Read on every call so tests can change it.
+export function catalogueEnabled() {
+  return import.meta.env.VITE_CATALOGUE_ENABLED === "true";
+}
 
 // Error thrown for every failed request.
 // `status` is 0 when the server could not be reached, so callers can tell a network
@@ -372,6 +385,83 @@ function readParticipation(resource) {
   };
 }
 
+// Reads a JSON:API "catalogue-items" resource (an event or a quest). Times are UTC
+// ISO strings; `timeZone` is the IANA zone the item takes place in.
+function readItem(resource) {
+  const attributes = resource.attributes || {};
+  if (
+    typeof resource.id !== "string" ||
+    !attributes.kind ||
+    typeof attributes.title !== "string" ||
+    Number.isNaN(Date.parse(attributes.starts_at)) ||
+    Number.isNaN(Date.parse(attributes.ends_at)) ||
+    !attributes.time_zone
+  ) {
+    throw new ApiError("The server returned an incomplete item.", 200);
+  }
+  return {
+    id: resource.id,
+    kind: attributes.kind,
+    ownerId: attributes.owner_id,
+    title: attributes.title,
+    description: attributes.description || "",
+    location: attributes.location || "",
+    startsAt: attributes.starts_at,
+    endsAt: attributes.ends_at,
+    timeZone: attributes.time_zone,
+    category: attributes.category || "",
+    proofInstructions: attributes.proof_instructions || "",
+    pointValue: attributes.point_value ?? null,
+    status: attributes.status,
+    publishedAt: attributes.published_at || "",
+    createdAt: attributes.created_at || "",
+    updatedAt: attributes.updated_at || "",
+  };
+}
+
+// POST /events (organizers only) -> the new event, saved as a draft.
+// `event` uses the backend's field names: title, description, location, starts_at,
+// ends_at, time_zone and category.
+export async function createEvent(event, token) {
+  return readItem(await request("/events", { method: "POST", body: event, token }));
+}
+
+// GET /items/me (organizers only) -> the signed-in organizer's events and quests,
+// drafts included, earliest first.
+export async function listMyItems(token) {
+  const data = await request("/items/me", { token });
+  if (!Array.isArray(data)) {
+    throw new ApiError("The server returned an unexpected item list.", 200);
+  }
+  return data.map(readItem);
+}
+
+// PATCH /items/{id} with only the changed fields -> the updated item. Only the item's
+// owner may change it, and archived items can't be changed.
+export async function updateItem(itemId, changes, token) {
+  const resource = await request(`/items/${encodeURIComponent(itemId)}`, {
+    method: "PATCH",
+    body: changes,
+    token,
+  });
+  return readItem(resource);
+}
+
+// Reads a JSON:API "participants" resource: someone who joined an item.
+function readParticipant(resource) {
+  const attributes = resource.attributes || {};
+  if (typeof resource.id !== "string" || typeof attributes.name !== "string") {
+    throw new ApiError("The server returned an incomplete participant.", 200);
+  }
+  return {
+    id: resource.id,
+    userId: attributes.user_id,
+    name: attributes.name,
+    status: attributes.status,
+    joinedAt: attributes.joined_at || "",
+  };
+}
+
 // Quest client: demo sample data in DEV when VITE_QUESTS_DEMO=true, otherwise the live API.
 export function getQuestClient(session) {
   if (questsDemoEnabled()) {
@@ -436,4 +526,13 @@ export async function listMyParticipations(token) {
     throw new ApiError("The server returned an unexpected participation list.", 200);
   }
   return data.map(readParticipation);
+}
+
+// GET /items/{id}/participants (the item's owner only) -> everyone who joined it.
+export async function listParticipants(itemId, token) {
+  const data = await request(`/items/${encodeURIComponent(itemId)}/participants`, { token });
+  if (!Array.isArray(data)) {
+    throw new ApiError("The server returned an unexpected participant list.", 200);
+  }
+  return data.map(readParticipant);
 }

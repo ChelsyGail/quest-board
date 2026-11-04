@@ -901,6 +901,17 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.list-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.list-toolbar p {
+  margin: 0;
+}
+
 .request-actions {
   display: flex;
   gap: 8px;
@@ -927,6 +938,11 @@ textarea {
   font-size: 12px;
   font-weight: 700;
   border-radius: 999px;
+}
+
+.status-joined {
+  color: var(--accent);
+  background: #eef2ff;
 }
 
 .status-pending {
@@ -1055,6 +1071,12 @@ textarea {
   color: var(--text);
   background: #fff;
   border: 1px solid var(--border);
+}
+
+.button-secondary.button-block {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
 }
 
 .button-secondary:hover {

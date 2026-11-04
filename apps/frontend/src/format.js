@@ -5,10 +5,22 @@ const ROLE_LABELS = {
   student: "Student",
 };
 
+// Role request and participation statuses.
 const STATUS_LABELS = {
   approved: "Approved",
+  joined: "Joined",
   pending: "Pending approval",
   rejected: "Rejected",
+};
+
+const ITEM_KIND_LABELS = {
+  event: "Event",
+  quest: "Quest",
+};
+
+const ITEM_STATUS_LABELS = {
+  draft: "Draft",
+  published: "Published",
 };
 
 export function roleLabel(role) {
@@ -19,14 +31,15 @@ export function statusLabel(status) {
   return STATUS_LABELS[status] || status;
 }
 
-const QUEST_STATUS_LABELS = {
-  draft: "Draft",
-  published: "Published",
-};
-
-export function questStatusLabel(status) {
-  return QUEST_STATUS_LABELS[status] || status;
+export function itemKindLabel(kind) {
+  return ITEM_KIND_LABELS[kind] || kind;
 }
+
+export function itemStatusLabel(status) {
+  return ITEM_STATUS_LABELS[status] || status;
+}
+
+export const questStatusLabel = itemStatusLabel;
 
 // Quest times are sent as ISO 8601 with a time zone, so they are shown in local time.
 export function formatDateTime(timestamp) {
