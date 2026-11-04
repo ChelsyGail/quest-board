@@ -72,3 +72,14 @@ export function formatItemTime(iso, timeZone) {
     timeStyle: "short",
   }).format(new Date(iso));
 }
+
+// An item's start and end in its own zone, e.g. "1 Nov 2026, 18:30 – 20:00". The zone is
+// named when it differs from the viewer's, so the times aren't mistaken for local ones.
+export function formatItemWindow(startsAt, endsAt, timeZone, viewerTimeZone = browserTimeZone()) {
+  const start = formatItemTime(startsAt, timeZone);
+  const end = formatItemTime(endsAt, timeZone);
+  const [startDay] = start.split(", ");
+  const [endDay, endTime] = end.split(", ");
+  const window = startDay === endDay ? `${start} – ${endTime}` : `${start} – ${end}`;
+  return timeZone === viewerTimeZone ? window : `${window} (${timeZone.replace(/_/g, " ")})`;
+}

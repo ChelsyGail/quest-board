@@ -2,11 +2,12 @@
 // The backend URL comes from VITE_API_BASE_URL (see .env.example).
 import {
   demoCreateQuest,
-  demoJoinQuest,
+  demoGetItem,
+  demoJoinItem,
+  demoListMyItems,
   demoListMyParticipations,
-  demoListMyQuests,
-  demoListPublishedQuests,
-  demoPublishQuest,
+  demoListPublishedItems,
+  demoPublishItem,
   resetDemoQuests,
 } from "./demoQuests.js";
 
@@ -41,32 +42,35 @@ export function roleRequestsEnabled() {
   return import.meta.env.VITE_ROLE_REQUESTS_ENABLED === "true";
 }
 
-// The backend has no complete quest API on main yet. Keep pages off until you turn them on.
-export function questsEnabled() {
-  return import.meta.env.VITE_QUESTS_ENABLED === "true";
+// Catalogue pages (quests and events). Either flag turns them on; the team's pages used
+// VITE_CATALOGUE_ENABLED and the quest pages VITE_QUESTS_ENABLED. Read on every call so
+// tests can change it.
+export function catalogueEnabled() {
+  return (
+    import.meta.env.VITE_CATALOGUE_ENABLED === "true" ||
+    import.meta.env.VITE_QUESTS_ENABLED === "true"
+  );
 }
 
+export const questsEnabled = catalogueEnabled;
+
 // Sample-data mode for local demos. Only available in the Vite dev server, never in
-// production builds. When on, quest calls never hit the network.
+// production builds. When on, quest calls never hit the network. It is never turned on
+// because a request failed.
 export function questsDemoEnabled() {
   return import.meta.env.DEV === true && import.meta.env.VITE_QUESTS_DEMO === "true";
 }
 
-// Limits aligned with apps/backend models/catalogue.py on Chelsy's QB-50 branch.
-export const QUEST_TITLE_MAX_LENGTH = 200;
-export const QUEST_DESCRIPTION_MAX_LENGTH = 5000;
-export const QUEST_LOCATION_MAX_LENGTH = 255;
-export const QUEST_CATEGORY_MAX_LENGTH = 64;
-export const QUEST_PROOF_MAX_LENGTH = 5000;
-export const QUEST_POINTS_MIN = 1;
-export const QUEST_POINTS_MAX = 10000;
+// Quest form limits, matching QuestCreate in apps/backend/src/models/catalogue.py.
+export const QUEST_TITLE_MAX_LENGTH = ITEM_TITLE_MAX_LENGTH;
+export const QUEST_DESCRIPTION_MAX_LENGTH = ITEM_DESCRIPTION_MAX_LENGTH;
+export const QUEST_LOCATION_MAX_LENGTH = ITEM_LOCATION_MAX_LENGTH;
+export const QUEST_CATEGORY_MAX_LENGTH = ITEM_CATEGORY_MAX_LENGTH;
+export const QUEST_PROOF_MAX_LENGTH = PROOF_INSTRUCTIONS_MAX_LENGTH;
+export const QUEST_POINTS_MIN = POINT_VALUE_MIN;
+export const QUEST_POINTS_MAX = POINT_VALUE_MAX;
 export const QUEST_TIME_ZONE_MAX_LENGTH = 64;
 export const DEFAULT_QUEST_TIME_ZONE = "Europe/Paris";
-
-// Read on every call so tests can change it.
-export function catalogueEnabled() {
-  return import.meta.env.VITE_CATALOGUE_ENABLED === "true";
-}
 
 // Error thrown for every failed request.
 // `status` is 0 when the server could not be reached, so callers can tell a network
@@ -156,7 +160,9 @@ export function formErrorsFrom(error, fieldNames) {
   return { fieldErrors, formError };
 }
 
-async function request(path, { method = "GET", body, token } = {}) {
+// Returns the response's `data`, or the whole JSON:API document with `document: true`
+// (for `meta` such as page totals).
+async function request(path, { method = "GET", body, token, document = false } = {}) {
   if (!API_BASE_URL) {
     throw new ApiError(
       "The API URL is not configured. Copy .env.example to .env and restart the dev server.",
@@ -205,7 +211,7 @@ async function request(path, { method = "GET", body, token } = {}) {
   if (!data || !data.data) {
     throw new ApiError("The server returned an unexpected response.", response.status);
   }
-  return data.data;
+  return document ? data : data.data;
 }
 
 // POST /auth/login -> { token, userId, expiresAt }
@@ -324,67 +330,6 @@ export async function reviewRoleRequest(requestId, decision, token) {
   return readRoleRequest(await request(path, { method: "POST", token }));
 }
 
-// Reads a JSON:API quest / catalogue-item resource.
-// Chelsy's QB-50 create endpoint returns type "catalogue-items" with point_value and owner_id.
-function readQuest(resource) {
-  const attributes = resource.attributes || {};
-  if (typeof resource.id !== "string" || typeof attributes.title !== "string" || !attributes.status) {
-    throw new ApiError("The server returned an incomplete quest.", 200);
-  }
-  // Accept both the live catalogue type and a future "quests" type.
-  if (resource.type && resource.type !== "catalogue-items" && resource.type !== "quests") {
-    throw new ApiError("The server returned an unexpected quest type.", 200);
-  }
-  const points = attributes.point_value ?? attributes.points;
-  return {
-    id: resource.id,
-    title: attributes.title,
-    description: attributes.description || "",
-    location: attributes.location || "",
-    startsAt: attributes.starts_at || "",
-    endsAt: attributes.ends_at || "",
-    timeZone: attributes.time_zone || "",
-    category: attributes.category || "",
-    proofInstructions: attributes.proof_instructions || "",
-    points,
-    status: attributes.status,
-    organizerId: attributes.owner_id || attributes.organizer_id,
-  };
-}
-
-// Clear explanation when the backend has no quest route yet (typical on main today).
-export function questApiUnavailableMessage(error, action = "load quests") {
-  if (error && (error.status === 404 || error.status === 405 || error.isUnsupported)) {
-    return (
-      `This backend doesn't support that quest action yet, so QuestBoard couldn't ${action}. ` +
-      "POST /quests (create draft) may still work on Chelsy's QB-50 branch; list, publish, and join are separate. " +
-      "For a local UI demo of those missing routes, set VITE_QUESTS_DEMO=true in apps/frontend/.env (dev only) and restart Vite."
-    );
-  }
-  return error?.message || "Something went wrong.";
-}
-
-function readQuestList(data) {
-  if (!Array.isArray(data)) {
-    throw new ApiError("The server returned an unexpected quest list.", 200);
-  }
-  return data.map(readQuest);
-}
-
-// Reads a JSON:API "quest-participations" resource.
-function readParticipation(resource) {
-  const attributes = resource.attributes || {};
-  if (typeof resource.id !== "string" || attributes.quest_id == null) {
-    throw new ApiError("The server returned an incomplete quest participation.", 200);
-  }
-  return {
-    id: resource.id,
-    questId: String(attributes.quest_id),
-    status: attributes.status || "joined",
-    joinedAt: attributes.joined_at || "",
-  };
-}
-
 // Reads a JSON:API "catalogue-items" resource (an event or a quest). Times are UTC
 // ISO strings; `timeZone` is the IANA zone the item takes place in.
 function readItem(resource) {
@@ -462,72 +407,6 @@ function readParticipant(resource) {
   };
 }
 
-// Quest client: demo sample data in DEV when VITE_QUESTS_DEMO=true, otherwise the live API.
-export function getQuestClient(session) {
-  if (questsDemoEnabled()) {
-    return {
-      isDemo: true,
-      listPublishedQuests: () => demoListPublishedQuests(),
-      listMyQuests: () => demoListMyQuests(),
-      createQuest: (fields) => demoCreateQuest(fields),
-      publishQuest: (questId) => demoPublishQuest(questId),
-      joinQuest: (questId) => demoJoinQuest(questId, session.userId),
-      listMyParticipations: () => demoListMyParticipations(session.userId),
-      resetDemo: () => resetDemoQuests(),
-    };
-  }
-
-  return {
-    isDemo: false,
-    listPublishedQuests: () => listPublishedQuests(session.token),
-    listMyQuests: () => listMyQuests(session.token),
-    createQuest: (fields) => createQuest(fields, session.token),
-    publishQuest: (questId) => publishQuest(questId, session.token),
-    joinQuest: (questId) => joinQuest(questId, session.token),
-    listMyParticipations: () => listMyParticipations(session.token),
-    resetDemo: async () => {},
-  };
-}
-
-// POST /quests (organizers) -> the new quest, saved as a draft.
-// Body matches QuestCreate on QB-50: point_value, time_zone, timezone-aware ISO times.
-export async function createQuest(fields, token) {
-  const resource = await request("/quests", { method: "POST", body: fields, token });
-  return readQuest(resource);
-}
-
-// GET /quests/mine (organizers) -> the signed-in organizer's own quests, drafts included.
-// Not on main or QB-50 yet; proposed for the frontend demo contract.
-export async function listMyQuests(token) {
-  return readQuestList(await request("/quests/mine", { token }));
-}
-
-// POST /quests/{id}/publish (the quest's organizer) -> the published quest.
-export async function publishQuest(questId, token) {
-  const path = `/quests/${encodeURIComponent(questId)}/publish`;
-  return readQuest(await request(path, { method: "POST", token }));
-}
-
-// GET /quests -> published quests.
-export async function listPublishedQuests(token) {
-  return readQuestList(await request("/quests", { token }));
-}
-
-// POST /quests/{id}/join (students) -> the new participation.
-export async function joinQuest(questId, token) {
-  const path = `/quests/${encodeURIComponent(questId)}/join`;
-  return readParticipation(await request(path, { method: "POST", token }));
-}
-
-// GET /quest-participations/me -> the quests the signed-in user has joined.
-export async function listMyParticipations(token) {
-  const data = await request("/quest-participations/me", { token });
-  if (!Array.isArray(data)) {
-    throw new ApiError("The server returned an unexpected participation list.", 200);
-  }
-  return data.map(readParticipation);
-}
-
 // GET /items/{id}/participants (the item's owner only) -> everyone who joined it.
 export async function listParticipants(itemId, token) {
   const data = await request(`/items/${encodeURIComponent(itemId)}/participants`, { token });
@@ -535,4 +414,150 @@ export async function listParticipants(itemId, token) {
     throw new ApiError("The server returned an unexpected participant list.", 200);
   }
   return data.map(readParticipant);
+}
+
+// Error codes the catalogue and participation routes use for a missing or hidden item.
+// A 404 without one of them means this backend has no such route.
+const ITEM_NOT_FOUND_CODES = ["item_not_found", "not_joined"];
+
+export function isItemNotFound(error) {
+  return error?.status === 404 && ITEM_NOT_FOUND_CODES.includes(error.code);
+}
+
+export function isMissingRoute(error) {
+  return error?.status === 405 || (error?.status === 404 && !isItemNotFound(error));
+}
+
+// A readable message, explaining a backend without the needed route instead of showing
+// "Not Found".
+export function questApiUnavailableMessage(error, action = "load quests") {
+  if (isMissingRoute(error)) {
+    return (
+      `This backend doesn't have the API needed to ${action}. ` +
+      "Check that it includes the catalogue and participation routes."
+    );
+  }
+  return error?.message || "Something went wrong.";
+}
+
+// POST /quests (organizers only) -> the new quest, saved as a draft.
+// `fields` match QuestCreate: point_value, time_zone and time-zone-aware ISO times.
+export async function createQuest(fields, token) {
+  return readItem(await request("/quests", { method: "POST", body: fields, token }));
+}
+
+// GET /items -> one page of published items that haven't ended yet, soonest first.
+// `query`: page, pageSize, q (title and description), category (exact, any case), and
+// windowStart/windowEnd (ISO instants; an item is kept when it overlaps the window).
+// Returns { items, page: { number, size, totalItems, totalPages } }.
+export async function listPublishedItems(query, token) {
+  const params = new URLSearchParams();
+  params.set("page", String(query.page || 1));
+  if (query.pageSize) params.set("page_size", String(query.pageSize));
+  if (query.q) params.set("q", query.q);
+  if (query.category) params.set("category", query.category);
+  if (query.windowStart) params.set("window_start", query.windowStart);
+  if (query.windowEnd) params.set("window_end", query.windowEnd);
+
+  const document = await request(`/items?${params}`, { token, document: true });
+  const page = document.meta && document.meta.page;
+  if (!Array.isArray(document.data) || !page || !Number.isInteger(page.total_items)) {
+    throw new ApiError("The server returned an unexpected item list.", 200);
+  }
+  return {
+    items: document.data.map(readItem),
+    page: {
+      number: page.number,
+      size: page.size,
+      totalItems: page.total_items,
+      totalPages: page.total_pages,
+    },
+  };
+}
+
+// GET /items/{id} -> the item's current details. Students only see published items;
+// anything else is a 404 with code "item_not_found".
+export async function getItem(itemId, token) {
+  return readItem(await request(`/items/${encodeURIComponent(itemId)}`, { token }));
+}
+
+// POST /items/{id}/publish (the item's owner only) -> the published item.
+// 409 "item_already_published" or "item_archived"; 403 "item_not_owned".
+export async function publishItem(itemId, token) {
+  const path = `/items/${encodeURIComponent(itemId)}/publish`;
+  return readItem(await request(path, { method: "POST", token }));
+}
+
+// Reads a JSON:API "participations" resource.
+function readParticipation(resource) {
+  const attributes = resource.attributes || {};
+  if (typeof resource.id !== "string" || attributes.item_id == null || !attributes.status) {
+    throw new ApiError("The server returned an incomplete participation.", 200);
+  }
+  return {
+    id: resource.id,
+    itemId: String(attributes.item_id),
+    userId: attributes.user_id,
+    status: attributes.status,
+    joinedAt: attributes.joined_at || "",
+  };
+}
+
+// POST /items/{id}/join -> the new participation: joining a quest or RSVPing to an event.
+// 409 "already_joined" for a second join; 404 "item_not_found" for a draft or missing item.
+export async function joinItem(itemId, token) {
+  const path = `/items/${encodeURIComponent(itemId)}/join`;
+  return readParticipation(await request(path, { method: "POST", token }));
+}
+
+// GET /me/participations -> everything the signed-in user joined or saved, as
+// [{ item, participation, saved }]. `participation` is null for an item only saved.
+export async function listMyParticipations(token) {
+  const data = await request("/me/participations", { token });
+  if (!Array.isArray(data)) {
+    throw new ApiError("The server returned an unexpected participation list.", 200);
+  }
+  return data.map((resource) => {
+    const participation = resource.attributes && resource.attributes.participation;
+    return {
+      item: readItem(resource),
+      participation: participation
+        ? {
+            id: String(participation.participation_id),
+            itemId: resource.id,
+            status: participation.status,
+            joinedAt: participation.joined_at || "",
+          }
+        : null,
+      saved: Boolean(resource.attributes && resource.attributes.saved),
+    };
+  });
+}
+
+// Quest client: in-browser sample data when demo mode is explicitly on (dev server only),
+// otherwise the live API. Both return the same shapes.
+export function getQuestClient(session) {
+  if (questsDemoEnabled()) {
+    return {
+      isDemo: true,
+      listPublishedItems: (query) => demoListPublishedItems(query),
+      getItem: (itemId) => demoGetItem(itemId),
+      listMyItems: () => demoListMyItems(),
+      createQuest: (fields) => demoCreateQuest(fields),
+      publishItem: (itemId) => demoPublishItem(itemId),
+      joinItem: (itemId) => demoJoinItem(itemId, session.userId),
+      listMyParticipations: () => demoListMyParticipations(session.userId),
+    };
+  }
+
+  return {
+    isDemo: false,
+    listPublishedItems: (query) => listPublishedItems(query, session.token),
+    getItem: (itemId) => getItem(itemId, session.token),
+    listMyItems: () => listMyItems(session.token),
+    createQuest: (fields) => createQuest(fields, session.token),
+    publishItem: (itemId) => publishItem(itemId, session.token),
+    joinItem: (itemId) => joinItem(itemId, session.token),
+    listMyParticipations: () => listMyParticipations(session.token),
+  };
 }

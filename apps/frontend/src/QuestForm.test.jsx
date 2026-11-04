@@ -49,9 +49,10 @@ function quest(overrides) {
     timeZone: "Europe/Paris",
     category: "Volunteering",
     proofInstructions: "A photo of your full bag.",
-    points: 50,
+    kind: "quest",
+    pointValue: 50,
     status: "draft",
-    organizerId: "4",
+    ownerId: "4",
     ...overrides,
   };
 }
@@ -59,6 +60,7 @@ function quest(overrides) {
 function renderForm({ session = SESSION } = {}) {
   const props = {
     onCreated: vi.fn(),
+    onResultUnknown: vi.fn(),
     onSessionExpired: vi.fn(),
   };
   render(<QuestForm session={session} {...props} />);
@@ -183,7 +185,7 @@ describe("Create quest form (QB-58)", () => {
     expect(PAYLOAD.starts_at).toBe("2026-10-20T12:00:00.000Z");
     expect(PAYLOAD.ends_at).toBe("2026-10-20T14:30:00.000Z");
     expect(await screen.findByText(/was saved as draft #11/)).toBeInTheDocument();
-    expect(screen.getByText(/draft on the server/i)).toBeInTheDocument();
+    expect(screen.getByText(/Students can't see it until you publish it/)).toBeInTheDocument();
     expect(props.onCreated).toHaveBeenCalledWith(created);
     expect(field("Title")).toHaveValue("");
   });
@@ -269,10 +271,10 @@ describe("Create quest form (QB-58)", () => {
     expect(createQuest).not.toHaveBeenCalled();
   });
 
-  it("does not reconcile through list endpoints when the result is unknown", async () => {
+  it("never resubmits when the result is unknown, and asks the page to check the list", async () => {
     const user = userEvent.setup();
     createQuest.mockRejectedValue(new ApiError("Couldn't get a response.", 0));
-    renderForm();
+    const props = renderForm();
 
     await fillForm(user);
     await submit(user);
@@ -280,9 +282,11 @@ describe("Create quest form (QB-58)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       `We couldn't confirm the result of saving "Campus cleanup". Couldn't get a response.`
     );
-    expect(screen.getByRole("alert")).toHaveTextContent(/Do not save again/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/Check your items for this draft/);
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/couldn't be saved|failed/i);
     expect(field("Title")).toHaveValue("  Campus cleanup  ");
     expect(createQuest).toHaveBeenCalledTimes(1);
+    expect(props.onResultUnknown).toHaveBeenCalledTimes(1);
   });
 
   it("marks demo saves as sample data, not a database save", async () => {
@@ -296,6 +300,6 @@ describe("Create quest form (QB-58)", () => {
 
     expect(await screen.findByText(/Demo mode — sample data only/i)).toBeInTheDocument();
     expect(screen.getByText(/was not saved to the database/i)).toBeInTheDocument();
-    expect(screen.queryByText(/draft on the server/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/until you publish it/i)).not.toBeInTheDocument();
   });
 });

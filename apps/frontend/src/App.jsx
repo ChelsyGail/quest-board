@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import AdminRoleRequests from "./AdminRoleRequests.jsx";
+import CreateEvent from "./CreateEvent.jsx";
 import {
   getCurrentUser,
   questsDemoEnabled,
@@ -139,7 +140,7 @@ function App() {
   const [profileStatus, setProfileStatus] = useState("loading");
   const [profileError, setProfileError] = useState("");
   const [profileAttempt, setProfileAttempt] = useState(0);
-  // When signed in: "account", "quests", "my-quests" or "admin".
+  // When signed in: "account", "quests", "my-quests", "create-event" or "admin".
   const [page, setPage] = useState(defaultSignedInPage);
   const [openCreate, setOpenCreate] = useState(false);
   const [demoVersion, setDemoVersion] = useState(0);
@@ -289,11 +290,16 @@ function App() {
     const navPages = [];
     if (profileStatus === "loaded" && questsOn) {
       navPages.push({ id: "quests", label: "Quests" });
-      if (isOrganizer) navPages.push({ id: "my-quests", label: "My quests" });
+      if (isOrganizer) navPages.push({ id: "my-quests", label: "My items" });
     }
+
+    // The event form always uses the live API, so it isn't offered in demo mode.
+    const showCreateEvent = profileStatus === "loaded" && questsOn && isOrganizer && !demoMode;
+    const showCreateQuest = profileStatus === "loaded" && questsOn && isOrganizer;
 
     const allowedPages = new Set(["account", ...navPages.map((item) => item.id)]);
     if (showAdmin) allowedPages.add("admin");
+    if (showCreateEvent) allowedPages.add("create-event");
     const currentPage = allowedPages.has(page)
       ? page
       : questsOn && profileStatus === "loaded"
@@ -349,6 +355,12 @@ function App() {
           onSessionExpired={handleSessionRejected}
         />
       );
+    } else if (currentPage === "create-event") {
+      body = (
+        <section className="section panel">
+          <CreateEvent session={session} onSessionExpired={handleSessionRejected} />
+        </section>
+      );
     } else {
       body = (
         <Profile
@@ -385,28 +397,44 @@ function App() {
             <p className="tagline">Campus adventure noticeboard</p>
           </div>
 
-          <nav className="app-nav" aria-label="Pages">
-            {navPages.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={currentPage === item.id ? "nav-link active" : "nav-link"}
-                aria-current={currentPage === item.id ? "page" : undefined}
-                onClick={() => showPage(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-            {isOrganizer && questsOn && profileStatus === "loaded" && (
-              <button
-                type="button"
-                className="button button-small nav-create"
-                onClick={() => showPage("my-quests", { openCreate: true })}
-              >
-                Create quest
-              </button>
-            )}
-          </nav>
+          {navPages.length > 0 && (
+            <nav className="app-nav" aria-label="Pages">
+              {navPages.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={currentPage === item.id ? "nav-link active" : "nav-link"}
+                  aria-current={currentPage === item.id ? "page" : undefined}
+                  onClick={() => showPage(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+              {showCreateQuest && (
+                <button
+                  type="button"
+                  className="button button-small nav-create"
+                  onClick={() => showPage("my-quests", { openCreate: true })}
+                >
+                  Create quest
+                </button>
+              )}
+              {showCreateEvent && (
+                <button
+                  type="button"
+                  className={
+                    currentPage === "create-event"
+                      ? "button button-small button-secondary nav-create active"
+                      : "button button-small button-secondary nav-create"
+                  }
+                  aria-current={currentPage === "create-event" ? "page" : undefined}
+                  onClick={() => showPage("create-event")}
+                >
+                  Create event
+                </button>
+              )}
+            </nav>
+          )}
 
           <div className="app-session">
             <span className="small muted session-ends">Session ends at {expiresAt}</span>

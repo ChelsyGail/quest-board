@@ -5,11 +5,10 @@ import {
   ApiError,
   catalogueEnabled,
   getCurrentUser,
-  listMyQuests,
   listMyParticipations,
   listMyItems,
   listMyRoleRequests,
-  listPublishedQuests,
+  listPublishedItems,
   listRoleRequests,
   login,
   questsEnabled,
@@ -19,18 +18,16 @@ import App from "./App.jsx";
 
 vi.mock("./api.js", async (importOriginal) => {
   const actual = await importOriginal();
-  const listMyQuests = vi.fn();
   const listMyParticipations = vi.fn();
-  const listPublishedQuests = vi.fn();
+  const listPublishedItems = vi.fn();
   return {
     ...actual,
     catalogueEnabled: vi.fn(),
     getCurrentUser: vi.fn(),
-    listMyQuests,
     listMyParticipations,
     listMyItems: vi.fn(),
     listMyRoleRequests: vi.fn(),
-    listPublishedQuests,
+    listPublishedItems,
     listRoleRequests: vi.fn(),
     login: vi.fn(),
     questsEnabled: vi.fn(),
@@ -41,13 +38,11 @@ vi.mock("./api.js", async (importOriginal) => {
     resetDemoQuests: vi.fn(),
     getQuestClient: () => ({
       isDemo: false,
-      listMyQuests: () => listMyQuests("tok"),
       listMyParticipations: () => listMyParticipations("tok"),
-      listPublishedQuests: () => listPublishedQuests("tok"),
+      listPublishedItems: (query) => listPublishedItems(query, "tok"),
+      getItem: vi.fn(),
       createQuest: vi.fn(),
-      publishQuest: vi.fn(),
-      joinQuest: vi.fn(),
-      resetDemo: vi.fn(),
+      joinItem: vi.fn(),
     }),
   };
 });
@@ -86,13 +81,17 @@ beforeEach(() => {
   vi.resetAllMocks();
   sessionStorage.clear();
   getCurrentUser.mockResolvedValue(USER);
-  questsEnabled.mockReturnValue(false);
+  // In api.js the two names are one flag.
+  questsEnabled.mockImplementation(() => catalogueEnabled());
   roleRequestsEnabled.mockReturnValue(false);
-  listMyQuests.mockResolvedValue([]);
+  listMyItems.mockResolvedValue([]);
   listMyParticipations.mockResolvedValue([]);
   catalogueEnabled.mockReturnValue(false);
   listMyRoleRequests.mockResolvedValue([]);
-  listPublishedQuests.mockResolvedValue([]);
+  listPublishedItems.mockResolvedValue({
+    items: [],
+    page: { number: 1, size: 12, totalItems: 0, totalPages: 0 },
+  });
   listRoleRequests.mockResolvedValue([]);
 });
 
@@ -310,7 +309,6 @@ describe("Admin navigation (no Jira key yet)", () => {
     await screen.findByLabelText("Name");
     await openAccountMenu(user);
     expect(screen.queryByRole("menuitem", { name: "Role requests" })).not.toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Pages" })).toBeInTheDocument();
     expect(listRoleRequests).not.toHaveBeenCalled();
   });
 
@@ -346,27 +344,32 @@ describe("Quest navigation (QB-58, QB-60, QB-90)", () => {
     await screen.findByLabelText("Name");
     expect(screen.queryByRole("button", { name: "Quests" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "My quests" })).not.toBeInTheDocument();
-    expect(listPublishedQuests).not.toHaveBeenCalled();
-    expect(listMyQuests).not.toHaveBeenCalled();
+    expect(listPublishedItems).not.toHaveBeenCalled();
+    expect(listMyItems).not.toHaveBeenCalled();
   });
 
   it("lands students on Quests after login when the feature is on", async () => {
     questsEnabled.mockReturnValue(true);
-    listPublishedQuests.mockResolvedValue([
-      {
-        id: "11",
-        title: "Campus cleanup",
-        description: "",
-        location: "Quai d'Orsay",
-        startsAt: "2026-10-20T12:00:00Z",
-        endsAt: "2026-10-20T14:00:00Z",
-        category: "Volunteering",
-        proofInstructions: "",
-        points: 50,
-        status: "published",
-        organizerId: "4",
-      },
-    ]);
+    listPublishedItems.mockResolvedValue({
+      items: [
+        {
+          id: "11",
+          kind: "quest",
+          ownerId: "4",
+          title: "Campus cleanup",
+          description: "",
+          location: "Quai d'Orsay",
+          startsAt: "2026-10-20T12:00:00Z",
+          endsAt: "2026-10-20T14:00:00Z",
+          timeZone: "Europe/Paris",
+          category: "Volunteering",
+          proofInstructions: "",
+          pointValue: 50,
+          status: "published",
+        },
+      ],
+      page: { number: 1, size: 12, totalItems: 1, totalPages: 1 },
+    });
     storeSession();
     render(<App />);
 
@@ -374,13 +377,14 @@ describe("Quest navigation (QB-58, QB-60, QB-90)", () => {
       "aria-current",
       "page"
     );
-    expect(screen.queryByRole("button", { name: "My quests" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "My items" })).not.toBeInTheDocument();
+    // The first item on an unfiltered first page is also featured.
     expect(
-      await screen.findByRole("button", { name: "View quest: Campus cleanup" })
-    ).toBeInTheDocument();
-    expect(listPublishedQuests).toHaveBeenCalledWith("tok");
+      await screen.findAllByRole("button", { name: "View quest: Campus cleanup" })
+    ).not.toHaveLength(0);
+    expect(listPublishedItems).toHaveBeenCalledWith({ page: 1, pageSize: 12 }, "tok");
     expect(listMyParticipations).toHaveBeenCalledWith("tok");
-    expect(listMyQuests).not.toHaveBeenCalled();
+    expect(listMyItems).not.toHaveBeenCalled();
   });
 
   it("keeps account settings available from the account menu", async () => {
@@ -394,7 +398,7 @@ describe("Quest navigation (QB-58, QB-60, QB-90)", () => {
     expect(screen.getByLabelText("Name")).toHaveValue("Ada");
   });
 
-  it("lets an organizer open My quests and Create quest", async () => {
+  it("lets an organizer open My items and Create quest", async () => {
     const user = userEvent.setup();
     questsEnabled.mockReturnValue(true);
     getCurrentUser.mockResolvedValue(ORGANIZER);
@@ -402,11 +406,11 @@ describe("Quest navigation (QB-58, QB-60, QB-90)", () => {
     render(<App />);
 
     expect(await screen.findByRole("button", { name: "Create quest" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "My quests" }));
+    await user.click(screen.getByRole("button", { name: "My items" }));
 
     expect(await screen.findByRole("heading", { name: "Create a quest" })).toBeInTheDocument();
     expect(screen.getByLabelText("Title")).toBeInTheDocument();
-    expect(listMyQuests).toHaveBeenCalledWith("tok");
+    await waitFor(() => expect(listMyItems).toHaveBeenCalledWith("tok"));
   });
 });
 
@@ -435,30 +439,33 @@ describe("Role-aware navigation (FE-10)", () => {
     storeSession({ userId: "1" });
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Role requests" }));
+    await screen.findByLabelText("Name");
+    await chooseAccountMenuItem(user, "Role requests");
     expect(screen.getByRole("heading", { name: "Role requests" })).toBeInTheDocument();
 
     // Leave the admin page to refresh, then come back after the role is gone.
-    await user.click(screen.getByRole("button", { name: "Your account" }));
+    await chooseAccountMenuItem(user, "Account settings");
     getCurrentUser.mockResolvedValue({ ...ADMIN, roles: ["student"] });
     await user.click(screen.getByRole("button", { name: "Refresh" }));
 
     expect(await screen.findByText("Roles: Student")).toBeInTheDocument();
-    expect(screen.queryByRole("navigation", { name: "Pages" })).not.toBeInTheDocument();
+    await openAccountMenu(user);
+    expect(screen.queryByRole("menuitem", { name: "Role requests" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Name")).toHaveValue("Root");
   });
 
-  it("uses the wide layout only while the admin page is shown", async () => {
+  it("shows the admin page in the same wide shell as every other page", async () => {
     const user = userEvent.setup();
     roleRequestsEnabled.mockReturnValue(true);
     getCurrentUser.mockResolvedValue(ADMIN);
     storeSession({ userId: "1" });
     const { container } = render(<App />);
 
-    const adminTab = await screen.findByRole("button", { name: "Role requests" });
-    expect(container.querySelector(".card")).not.toHaveClass("card-wide");
-    await user.click(adminTab);
-    expect(container.querySelector(".card")).toHaveClass("card-wide");
+    await screen.findByLabelText("Name");
+    await chooseAccountMenuItem(user, "Role requests");
+    expect(container.querySelector(".app-main")).toContainElement(
+      screen.getByRole("heading", { name: "Role requests" })
+    );
   });
 });
 
@@ -470,13 +477,12 @@ describe("Organizer pages (FE-12, FE-14)", () => {
     catalogueEnabled.mockReturnValue(true);
     getCurrentUser.mockResolvedValue(ORGANIZER);
     storeSession();
-    const { container } = render(<App />);
+    render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Create event" }));
 
     expect(screen.getByRole("heading", { name: "Create an event" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save event" })).toBeInTheDocument();
-    expect(container.querySelector(".card")).toHaveClass("card-wide");
   });
 
   it("gives organizers a My items tab", async () => {
@@ -489,7 +495,7 @@ describe("Organizer pages (FE-12, FE-14)", () => {
 
     await user.click(await screen.findByRole("button", { name: "My items" }));
 
-    expect(screen.getByRole("heading", { name: "My items" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "My items" })).toBeInTheDocument();
     expect(listMyItems).toHaveBeenCalledWith("tok");
   });
 
@@ -502,7 +508,10 @@ describe("Organizer pages (FE-12, FE-14)", () => {
     storeSession();
     render(<App />);
 
-    await screen.findByLabelText("Name");
+    // With the catalogue on, everyone lands on the board; otherwise on their account.
+    await screen.findByRole("heading", {
+      name: enabled ? "What's your next campus adventure?" : "Your account",
+    });
     expect(screen.queryByRole("button", { name: "Create event" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "My items" })).not.toBeInTheDocument();
   });

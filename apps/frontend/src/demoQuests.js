@@ -1,8 +1,9 @@
-// Development-only sample quests. Never used in production builds and never talks
+// Development-only sample items. Never used in production builds and never talks
 // to the real API. Data lives in sessionStorage under a dedicated key so it cannot
-// mix with real accounts or live requests.
+// mix with real accounts or live requests. Shapes match the live API client.
+import { matchesCatalogueQuery } from "./questFilters.js";
 
-const STORAGE_KEY = "questboard.demo.quests.v2";
+const STORAGE_KEY = "questboard.demo.quests.v3";
 
 function atLocalDay(offsetDays, startHour, startMinute, endHour, endMinute) {
   const start = new Date();
@@ -13,8 +14,24 @@ function atLocalDay(offsetDays, startHour, startMinute, endHour, endMinute) {
   return { startsAt: start.toISOString(), endsAt: end.toISOString() };
 }
 
+function demoItem(fields) {
+  return {
+    kind: "quest",
+    ownerId: "demo-organizer",
+    timeZone: "Europe/Paris",
+    proofInstructions: "",
+    pointValue: null,
+    status: "published",
+    publishedAt: "",
+    createdAt: "",
+    updatedAt: "",
+    ...fields,
+  };
+}
+
 function seedData() {
-  const today = atLocalDay(0, 16, 0, 18, 0);
+  // Late enough that it is still on the board for most of the day.
+  const today = atLocalDay(0, 21, 0, 23, 30);
   const tomorrow = atLocalDay(1, 12, 30, 14, 0);
   const midWeek = atLocalDay(3, 14, 0, 16, 30);
   const weekend = atLocalDay(5, 10, 0, 12, 0);
@@ -22,120 +39,104 @@ function seedData() {
   const later = atLocalDay(12, 15, 0, 17, 0);
 
   return {
-    nextQuestId: 8,
-    nextParticipationId: 2,
-    quests: [
-      {
+    nextItemId: 10,
+    nextParticipationId: 1,
+    items: [
+      demoItem({
         id: "demo-1",
         title: "Campus cleanup",
         description: "Pick up litter around the library and the Quai. Bags and gloves provided.",
         location: "Quai d'Orsay",
         ...midWeek,
-        timeZone: "Europe/Paris",
         category: "Volunteering",
         proofInstructions: "A photo of your full bag.",
-        points: 50,
-        status: "published",
-        organizerId: "demo-organizer",
-      },
-      {
+        pointValue: 50,
+      }),
+      demoItem({
         id: "demo-2",
         title: "Chess night",
         description: "Casual games in the student lounge. All levels welcome — bring a friend or come solo.",
         location: "Student lounge",
         ...tomorrow,
-        timeZone: "Europe/Paris",
         category: "Culture",
         proofInstructions: "Ask the host to stamp your board.",
-        points: 25,
-        status: "published",
-        organizerId: "demo-organizer",
-      },
-      {
+        pointValue: 25,
+      }),
+      demoItem({
         id: "demo-3",
         title: "Photo walk draft",
         description: "An afternoon walk to photograph campus landmarks.",
         location: "Main courtyard",
         ...midWeek,
-        timeZone: "Europe/Paris",
         category: "Arts",
         proofInstructions: "Share three photos in the club chat.",
-        points: 40,
+        pointValue: 40,
         status: "draft",
-        organizerId: "demo-organizer",
-      },
-      {
+      }),
+      demoItem({
         id: "demo-4",
         title: "Pickup football",
         description: "Friendly match on the grass behind Combes. Cleats optional; shin guards recommended.",
         location: "Combes field",
         ...today,
-        timeZone: "Europe/Paris",
         category: "Sports",
         proofInstructions: "Check in with the captain at kickoff.",
-        points: 30,
-        status: "published",
-        organizerId: "demo-organizer",
-      },
-      {
+        pointValue: 30,
+      }),
+      demoItem({
         id: "demo-5",
         title: "Study sprint: midterms",
         description: "Quiet focus block with pomodoro timers and shared whiteboards.",
         location: "Library room B",
         ...weekend,
-        timeZone: "Europe/Paris",
         category: "Academic",
         proofInstructions: "Sign the attendance sheet before you leave.",
-        points: 20,
-        status: "published",
-        organizerId: "demo-organizer",
-      },
-      {
+        pointValue: 20,
+      }),
+      demoItem({
         id: "demo-6",
+        kind: "event",
         title: "Gallery opening night",
         description: "Student exhibition opening with short artist talks and light refreshments.",
         location: "AMEX gallery",
         ...nextWeek,
-        timeZone: "Europe/Paris",
         category: "Arts",
-        proofInstructions: "Get a sticker at the door.",
-        points: 35,
-        status: "published",
-        organizerId: "demo-organizer",
-      },
-      {
+      }),
+      demoItem({
         id: "demo-7",
         title: "Neighborhood food walk",
         description: "Sample a few neighborhood spots and compare notes afterward on campus.",
         location: "Meet at main gate",
         ...later,
-        timeZone: "Europe/Paris",
         category: "Social",
         proofInstructions: "Share one recommendation in the group chat.",
-        points: 40,
-        status: "published",
-        organizerId: "demo-organizer",
-      },
+        pointValue: 40,
+      }),
+      demoItem({
+        id: "demo-8",
+        kind: "event",
+        title: "Open mic",
+        description: "Music, poetry and comedy from students. Sign up at the door to perform.",
+        location: "Student lounge",
+        ...weekend,
+        category: "Social",
+      }),
     ],
-    // Map of userId -> [questId, ...]
-    joinedByUser: {},
+    // Map of userId -> [{ id, itemId, status, joinedAt }]
+    participationsByUser: {},
   };
 }
 
 function readStore() {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const seeded = seedData();
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-      return seeded;
-    }
-    return JSON.parse(raw);
+    if (raw) return JSON.parse(raw);
   } catch {
-    const seeded = seedData();
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-    return seeded;
+    // Unreadable data is replaced by a fresh seed below.
   }
+  const seeded = seedData();
+  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
+  return seeded;
 }
 
 function writeStore(store) {
@@ -149,96 +150,116 @@ function delay(result) {
   });
 }
 
+function demoError(message, status, code) {
+  return Promise.reject(Object.assign(new Error(message), { status, code }));
+}
+
+function byStartTime(a, b) {
+  return Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.id.localeCompare(b.id);
+}
+
 export function resetDemoQuests() {
   sessionStorage.removeItem(STORAGE_KEY);
   return delay(seedData());
 }
 
-export function demoListPublishedQuests() {
-  const store = readStore();
-  return delay(store.quests.filter((quest) => quest.status === "published"));
+export function demoListPublishedItems(query = {}) {
+  const pageSize = query.pageSize || 12;
+  const pageNumber = query.page || 1;
+  const matching = readStore()
+    .items.filter((item) => matchesCatalogueQuery(item, query))
+    .sort(byStartTime);
+  const start = (pageNumber - 1) * pageSize;
+  return delay({
+    items: matching.slice(start, start + pageSize),
+    page: {
+      number: pageNumber,
+      size: pageSize,
+      totalItems: matching.length,
+      totalPages: Math.ceil(matching.length / pageSize),
+    },
+  });
 }
 
-export function demoListMyQuests() {
-  const store = readStore();
-  // Demo mode shows every sample draft/published item as "mine".
-  return delay([...store.quests].reverse());
+export function demoGetItem(itemId) {
+  const item = readStore().items.find((entry) => entry.id === itemId);
+  if (!item || item.status !== "published") {
+    return demoError("The item does not exist or is not available.", 404, "item_not_found");
+  }
+  return delay({ ...item });
+}
+
+export function demoListMyItems() {
+  // Demo mode shows every sample item as the signed-in organizer's own.
+  return delay([...readStore().items].sort(byStartTime));
 }
 
 export function demoCreateQuest(fields) {
   const store = readStore();
-  const quest = {
-    id: `demo-${store.nextQuestId++}`,
+  const item = demoItem({
+    id: `demo-${store.nextItemId++}`,
     title: fields.title,
     description: fields.description,
     location: fields.location,
     startsAt: fields.starts_at,
     endsAt: fields.ends_at,
-    timeZone: fields.time_zone || "Europe/Paris",
+    timeZone: fields.time_zone,
     category: fields.category,
     proofInstructions: fields.proof_instructions,
-    points: fields.point_value ?? fields.points,
+    pointValue: fields.point_value,
     status: "draft",
-    organizerId: "demo-organizer",
-  };
-  store.quests.push(quest);
+  });
+  store.items.push(item);
   writeStore(store);
-  return delay(quest);
+  return delay({ ...item });
 }
 
-export function demoPublishQuest(questId) {
+export function demoPublishItem(itemId) {
   const store = readStore();
-  const quest = store.quests.find((item) => item.id === questId);
-  if (!quest) {
-    return Promise.reject(Object.assign(new Error("Quest not found"), { status: 404 }));
+  const item = store.items.find((entry) => entry.id === itemId);
+  if (!item) {
+    return demoError("The item does not exist or is not available.", 404, "item_not_found");
   }
-  if (quest.status === "published") {
-    return Promise.reject(
-      Object.assign(new Error("Quest already published"), {
-        status: 409,
-        code: "quest_already_published",
-      })
-    );
+  if (item.status === "published") {
+    return demoError("This item is already visible to students.", 409, "item_already_published");
   }
-  quest.status = "published";
+  item.status = "published";
   writeStore(store);
-  return delay({ ...quest });
+  return delay({ ...item });
 }
 
 export function demoListMyParticipations(userId) {
   const store = readStore();
-  const ids = store.joinedByUser[userId] || [];
+  const participations = store.participationsByUser[userId] || [];
   return delay(
-    ids.map((questId, index) => ({
-      id: `demo-p-${index + 1}`,
-      questId,
-      status: "joined",
-      joinedAt: new Date().toISOString(),
-    }))
+    participations
+      .map((participation) => ({
+        item: store.items.find((item) => item.id === participation.itemId),
+        participation,
+        saved: false,
+      }))
+      .filter((entry) => entry.item)
   );
 }
 
-export function demoJoinQuest(questId, userId) {
+export function demoJoinItem(itemId, userId) {
   const store = readStore();
-  const quest = store.quests.find((item) => item.id === questId && item.status === "published");
-  if (!quest) {
-    return Promise.reject(Object.assign(new Error("Quest not found"), { status: 404 }));
+  const item = store.items.find((entry) => entry.id === itemId && entry.status === "published");
+  if (!item) {
+    return demoError("The item does not exist or is not available.", 404, "item_not_found");
   }
-  const ids = store.joinedByUser[userId] || [];
-  if (ids.includes(questId)) {
-    return Promise.reject(
-      Object.assign(new Error("You already joined this quest."), {
-        status: 409,
-        code: "quest_already_joined",
-      })
-    );
+  const participations = store.participationsByUser[userId] || [];
+  if (participations.some((participation) => participation.itemId === itemId)) {
+    return demoError("You have already joined this item.", 409, "already_joined");
   }
-  store.joinedByUser[userId] = [...ids, questId];
-  writeStore(store);
-  return delay({
+  const participation = {
     id: `demo-p-${store.nextParticipationId++}`,
-    questId,
+    itemId,
+    userId,
     status: "joined",
     joinedAt: new Date().toISOString(),
-  });
+  };
+  store.participationsByUser[userId] = [...participations, participation];
+  writeStore(store);
+  return delay({ ...participation });
 }

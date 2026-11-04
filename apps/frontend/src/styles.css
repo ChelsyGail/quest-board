@@ -390,6 +390,27 @@ body {
   margin: 0;
 }
 
+.panel-state-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.panel-state-inline p {
+  margin: 0;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;

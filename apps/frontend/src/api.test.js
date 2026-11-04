@@ -5,17 +5,19 @@ import {
   createRoleRequest,
   formErrorsFrom,
   getCurrentUser,
-  joinQuest,
+  getItem,
+  isItemNotFound,
+  isMissingRoute,
+  joinItem,
   listMyParticipations,
-  listMyQuests,
   listMyRoleRequests,
-  listPublishedQuests,
+  listPublishedItems,
   catalogueEnabled,
   createEvent,
   listMyItems,
   listParticipants,
   listRoleRequests,
-  publishQuest,
+  publishItem,
   questApiUnavailableMessage,
   questsDemoEnabled,
   questsEnabled,
@@ -443,8 +445,10 @@ describe("api client", () => {
   });
 });
 
-describe("quest client (proposed contract, QB-58/60/90)", () => {
+describe("quest and participation client (QB-58/60/90)", () => {
   const questAttributes = {
+    kind: "quest",
+    owner_id: "4",
     title: "Campus cleanup",
     description: "Pick up litter.",
     location: "Quai d'Orsay",
@@ -455,34 +459,20 @@ describe("quest client (proposed contract, QB-58/60/90)", () => {
     proof_instructions: "Photo of your bag.",
     point_value: 50,
     status: "draft",
-    owner_id: "4",
   };
-  const questResource = {
-    type: "catalogue-items",
-    id: "11",
-    attributes: { ...questAttributes, kind: "quest" },
-  };
-  const parsedQuest = {
-    id: "11",
-    title: "Campus cleanup",
-    description: "Pick up litter.",
-    location: "Quai d'Orsay",
-    startsAt: "2026-10-20T12:00:00Z",
-    endsAt: "2026-10-20T14:00:00Z",
-    timeZone: "Europe/Paris",
-    category: "Volunteering",
-    proofInstructions: "Photo of your bag.",
-    points: 50,
-    status: "draft",
-    organizerId: "4",
-  };
+  const questResource = { type: "catalogue-items", id: "11", attributes: questAttributes };
+  const page = (overrides) => ({
+    page: { number: 1, size: 12, total_items: 1, total_pages: 1, ...overrides },
+  });
 
-  it("is off unless VITE_QUESTS_ENABLED is true", () => {
+  it("is on when either VITE_CATALOGUE_ENABLED or VITE_QUESTS_ENABLED is true", () => {
+    vi.stubEnv("VITE_CATALOGUE_ENABLED", "");
     vi.stubEnv("VITE_QUESTS_ENABLED", "");
     expect(questsEnabled()).toBe(false);
-    vi.stubEnv("VITE_QUESTS_ENABLED", "false");
-    expect(questsEnabled()).toBe(false);
     vi.stubEnv("VITE_QUESTS_ENABLED", "true");
+    expect(questsEnabled()).toBe(true);
+    vi.stubEnv("VITE_QUESTS_ENABLED", "false");
+    vi.stubEnv("VITE_CATALOGUE_ENABLED", "true");
     expect(questsEnabled()).toBe(true);
   });
 
@@ -494,10 +484,17 @@ describe("quest client (proposed contract, QB-58/60/90)", () => {
     expect(questsDemoEnabled()).toBe(false);
   });
 
-  it("explains a missing quest API instead of a generic 404", () => {
-    expect(questApiUnavailableMessage(new ApiError("Not Found", 404), "load quests")).toMatch(
-      /doesn't support that quest action/i
+  it("tells a missing route apart from a missing item", () => {
+    const missingItem = new ApiError("Item not found", 404, {}, "item_not_found");
+    const missingRoute = new ApiError("Not Found", 404, {}, "request_rejected");
+    expect(isItemNotFound(missingItem)).toBe(true);
+    expect(isMissingRoute(missingItem)).toBe(false);
+    expect(isMissingRoute(missingRoute)).toBe(true);
+    expect(isMissingRoute(new ApiError("Method Not Allowed", 405))).toBe(true);
+    expect(questApiUnavailableMessage(missingRoute, "load quests")).toMatch(
+      /doesn't have the API needed to load quests/
     );
+    expect(questApiUnavailableMessage(missingItem, "join")).toBe("Item not found");
     expect(questApiUnavailableMessage(new ApiError("down", 0), "load quests")).toBe("down");
   });
 
@@ -507,7 +504,14 @@ describe("quest client (proposed contract, QB-58/60/90)", () => {
 
     const quest = await createQuest(fields, "tok");
 
-    expect(quest).toEqual(parsedQuest);
+    expect(quest).toMatchObject({
+      id: "11",
+      kind: "quest",
+      ownerId: "4",
+      pointValue: 50,
+      timeZone: "Europe/Paris",
+      status: "draft",
+    });
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe("http://api.test/quests");
     expect(options.method).toBe("POST");
@@ -515,66 +519,142 @@ describe("quest client (proposed contract, QB-58/60/90)", () => {
     expect(JSON.parse(options.body)).toEqual(fields);
   });
 
-  it("lists the organizer's own quests from GET /quests/mine", async () => {
-    const fetchMock = stubFetch(jsonResponse(200, { data: [questResource] }));
+  it("lists published items from GET /items with only the filters that are set", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(200, {
+        data: [{ ...questResource, attributes: { ...questAttributes, status: "published" } }],
+        meta: page({ number: 2, total_items: 25, total_pages: 3 }),
+      })
+    );
 
-    expect(await listMyQuests("tok")).toEqual([parsedQuest]);
-    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/quests/mine");
-    expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+    const result = await listPublishedItems(
+      {
+        page: 2,
+        pageSize: 12,
+        q: "clean up",
+        category: "Volunteering",
+        windowStart: "2026-11-03T23:00:00.000Z",
+        windowEnd: "2026-11-04T22:59:59.999Z",
+      },
+      "tok"
+    );
+
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.pathname).toBe("/items");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      page: "2",
+      page_size: "12",
+      q: "clean up",
+      category: "Volunteering",
+      window_start: "2026-11-03T23:00:00.000Z",
+      window_end: "2026-11-04T22:59:59.999Z",
+    });
+    expect(result.page).toEqual({ number: 2, size: 12, totalItems: 25, totalPages: 3 });
+    expect(result.items[0]).toMatchObject({ id: "11", status: "published" });
+
+    stubFetch(jsonResponse(200, { data: [], meta: page() }));
+    await listPublishedItems({ page: 1 }, "tok");
+    expect(fetch.mock.calls[0][0]).toBe("http://api.test/items?page=1");
   });
 
-  it("publishes with POST /quests/{id}/publish and no body", async () => {
-    const published = { ...questResource, attributes: { ...questAttributes, status: "published" } };
-    const fetchMock = stubFetch(jsonResponse(200, { data: published }));
+  it("rejects an item list without page totals", async () => {
+    stubFetch(jsonResponse(200, { data: [questResource] }));
+    await expect(listPublishedItems({ page: 1 }, "tok")).rejects.toThrow("unexpected item list");
+  });
 
-    expect((await publishQuest("11", "tok")).status).toBe("published");
-    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/quests/11/publish");
+  it("reads one item from GET /items/{id}", async () => {
+    const fetchMock = stubFetch(jsonResponse(200, { data: questResource }));
+    expect((await getItem("11", "tok")).title).toBe("Campus cleanup");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/items/11");
+  });
+
+  it("publishes with POST /items/{id}/publish and keeps the conflict code", async () => {
+    const published = { ...questResource, attributes: { ...questAttributes, status: "published" } };
+    const fetchMock = stubFetch(
+      jsonResponse(200, { data: published }),
+      jsonResponse(409, {
+        errors: [{ status: "409", code: "item_archived", detail: "Archived items cannot be changed." }],
+      })
+    );
+
+    expect((await publishItem("11", "tok")).status).toBe("published");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/items/11/publish");
     expect(fetchMock.mock.calls[0][1].method).toBe("POST");
     expect(fetchMock.mock.calls[0][1].body).toBeUndefined();
+    await expect(publishItem("11", "tok")).rejects.toMatchObject({
+      status: 409,
+      code: "item_archived",
+    });
   });
 
-  it("lists published quests from GET /quests", async () => {
-    const fetchMock = stubFetch(jsonResponse(200, { data: [questResource] }));
-
-    expect(await listPublishedQuests("tok")).toHaveLength(1);
-    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/quests");
-  });
-
-  it("joins with POST /quests/{id}/join and reads the participation", async () => {
+  it("joins with POST /items/{id}/join and reads the participation", async () => {
     const fetchMock = stubFetch(
       jsonResponse(201, {
         data: {
-          type: "quest-participations",
+          type: "participations",
           id: "3",
-          attributes: { quest_id: 11, status: "joined", joined_at: "2026-10-14T10:00:00Z" },
+          attributes: {
+            item_id: 11,
+            user_id: 7,
+            status: "joined",
+            joined_at: "2026-10-14T10:00:00Z",
+          },
         },
       })
     );
 
-    expect(await joinQuest("11", "tok")).toEqual({
+    expect(await joinItem("11", "tok")).toEqual({
       id: "3",
-      questId: "11",
+      itemId: "11",
+      userId: 7,
       status: "joined",
       joinedAt: "2026-10-14T10:00:00Z",
     });
-    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/quests/11/join");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/items/11/join");
     expect(fetchMock.mock.calls[0][1].method).toBe("POST");
   });
 
-  it("lists participations from GET /quest-participations/me", async () => {
+  it("reads the nested participation from GET /me/participations", async () => {
     const fetchMock = stubFetch(
       jsonResponse(200, {
-        data: [{ type: "quest-participations", id: "3", attributes: { quest_id: "11" } }],
+        data: [
+          {
+            type: "my-items",
+            id: "11",
+            attributes: {
+              ...questAttributes,
+              status: "published",
+              participation: {
+                participation_id: 3,
+                status: "joined",
+                twist: null,
+                joined_at: "2026-10-14T10:00:00Z",
+              },
+              saved: false,
+            },
+          },
+          {
+            type: "my-items",
+            id: "12",
+            attributes: { ...questAttributes, kind: "event", status: "published", saved: true },
+          },
+        ],
+        meta: { count: 2, joined_count: 1, saved_count: 1 },
       })
     );
 
-    expect((await listMyParticipations("tok"))[0].questId).toBe("11");
-    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/quest-participations/me");
-  });
+    const [joined, saved] = await listMyParticipations("tok");
 
-  it("rejects incomplete quest responses", async () => {
-    stubFetch(jsonResponse(200, { data: [{ type: "quests", id: "11", attributes: {} }] }));
-
-    await expect(listMyQuests("tok")).rejects.toThrow("incomplete quest");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/me/participations");
+    expect(joined.item.id).toBe("11");
+    expect(joined.participation).toEqual({
+      id: "3",
+      itemId: "11",
+      status: "joined",
+      joinedAt: "2026-10-14T10:00:00Z",
+    });
+    expect(joined.saved).toBe(false);
+    expect(saved.participation).toBeNull();
+    expect(saved.saved).toBe(true);
   });
 });

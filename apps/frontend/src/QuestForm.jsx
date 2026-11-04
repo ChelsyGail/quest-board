@@ -13,6 +13,7 @@ import {
   getQuestClient,
   questApiUnavailableMessage,
 } from "./api.js";
+import { CATEGORY_SUGGESTIONS } from "./questFilters.js";
 import { describeWallTimeError, isValidTimeZone, wallTimeToIso } from "./questTime.js";
 
 // Form fields use the API's field names (QuestCreate on QB-50).
@@ -97,17 +98,19 @@ function toPayload(form) {
 
 function successCopy(quest, isDemo) {
   const where = [quest.location, quest.category].filter(Boolean).join(" · ");
-  const points = quest.points != null ? `${quest.points} points` : "";
+  const points = quest.pointValue != null ? `${quest.pointValue} points` : "";
   const details = [where, points].filter(Boolean).join(" · ");
   const base = `"${quest.title}" was saved as draft #${quest.id}${details ? ` (${details})` : ""}.`;
   if (isDemo) {
     return `${base} Demo mode — sample data only; this was not saved to the database.`;
   }
-  return `${base} It is a draft on the server. Publish is not available until that API exists.`;
+  return `${base} Students can't see it until you publish it from your items above.`;
 }
 
 // Create quest form (QB-58). A new quest is always saved as a draft.
-function QuestForm({ session, onCreated, onSessionExpired }) {
+// `onResultUnknown` is called when the save may or may not have happened, so the caller
+// can reload the organizer's items to show whether it did.
+function QuestForm({ session, onCreated, onResultUnknown, onSessionExpired }) {
   const client = getQuestClient(session);
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
@@ -151,11 +154,13 @@ function QuestForm({ session, onCreated, onSessionExpired }) {
         return;
       }
       if (error.resultUnknown) {
-        // List/mine is not available on QB-50; do not resubmit or pretend to reconcile.
+        // Nothing identifies a retried create, so never resubmit automatically.
         setFormError(
           `We couldn't confirm the result of saving "${payload.title}". ${error.message} ` +
-            "Your details are still below. Do not save again until you know whether the draft was created."
+            "Your details are still below. Check your items for this draft before saving again, " +
+            "so you don't create it twice."
         );
+        onResultUnknown?.();
       } else if (error.status === 403) {
         setFormError(`You don't have permission to create quests. ${error.message}`);
       } else if (error.status === 404 || error.status === 405 || error.isUnsupported) {
@@ -170,7 +175,7 @@ function QuestForm({ session, onCreated, onSessionExpired }) {
     }
   }
 
-  function textField(field, label, { multiline = false, hint = "" } = {}) {
+  function textField(field, label, { multiline = false, hint = "", list } = {}) {
     const Input = multiline ? "textarea" : "input";
     const hintId = hint ? `quest-${field}-hint` : undefined;
     return (
@@ -181,6 +186,7 @@ function QuestForm({ session, onCreated, onSessionExpired }) {
           type={multiline ? undefined : "text"}
           rows={multiline ? 3 : undefined}
           aria-describedby={hintId}
+          list={list}
           value={form[field]}
           onChange={(event) => update(field, event.target.value)}
           className={errors[field] ? "invalid" : ""}
@@ -199,7 +205,15 @@ function QuestForm({ session, onCreated, onSessionExpired }) {
     <form onSubmit={handleSubmit} noValidate className="quest-form">
       <div className="form-grid">
         {textField("title", "Title")}
-        {textField("category", "Category", { hint: "For example: Sports, Culture, Volunteering." })}
+        {textField("category", "Category", {
+          hint: "Pick a suggestion or type your own. Students can filter by it.",
+          list: "quest-category-suggestions",
+        })}
+        <datalist id="quest-category-suggestions">
+          {CATEGORY_SUGGESTIONS.map((category) => (
+            <option key={category} value={category} />
+          ))}
+        </datalist>
       </div>
       {textField("description", "Description", { multiline: true })}
       <div className="form-grid">

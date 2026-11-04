@@ -1,81 +1,98 @@
 import { describe, expect, it } from "vitest";
-import { categoriesFromQuests, filterQuests, pickFeaturedQuest } from "./questFilters.js";
+import {
+  EMPTY_FILTERS,
+  catalogueQuery,
+  categoryOptions,
+  dateWindow,
+  matchesCatalogueQuery,
+} from "./questFilters.js";
 
-function localIso(offsetDays, hour = 14) {
-  const date = new Date();
-  date.setDate(date.getDate() + offsetDays);
-  date.setHours(hour, 0, 0, 0);
-  return date.toISOString();
-}
+const filters = (overrides) => ({ ...EMPTY_FILTERS, ...overrides });
+const NOW = new Date(2026, 10, 4, 15, 30); // 4 Nov 2026, 15:30 local
 
-function ymd(offsetDays) {
-  const date = new Date();
-  date.setDate(date.getDate() + offsetDays);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-const quests = [
-  {
-    id: "1",
+function item(overrides) {
+  return {
     title: "Campus cleanup",
-    location: "Quai d'Orsay",
+    description: "Pick up litter",
     category: "Volunteering",
-    startsAt: localIso(0),
     status: "published",
-  },
-  {
-    id: "2",
-    title: "Chess night",
-    location: "Student lounge",
-    category: "Culture",
-    startsAt: localIso(2),
-    status: "published",
-  },
-  {
-    id: "3",
-    title: "Gallery night",
-    location: "AMEX gallery",
-    category: "Arts",
-    startsAt: localIso(14),
-    status: "published",
-  },
-];
+    startsAt: new Date(2026, 10, 10, 12).toISOString(),
+    endsAt: new Date(2026, 10, 10, 14).toISOString(),
+    ...overrides,
+  };
+}
 
-describe("questFilters", () => {
-  it("lists unique categories", () => {
-    expect(categoriesFromQuests(quests)).toEqual(["Arts", "Culture", "Volunteering"]);
-  });
-
-  it("searches title and location", () => {
-    expect(filterQuests(quests, { query: "lounge" }).map((quest) => quest.id)).toEqual(["2"]);
-    expect(filterQuests(quests, { query: "campus" }).map((quest) => quest.id)).toEqual(["1"]);
-  });
-
-  it("filters by category", () => {
-    expect(filterQuests(quests, { category: "Arts" }).map((quest) => quest.id)).toEqual(["3"]);
-  });
-
-  it("filters today and this week in local time", () => {
-    const today = filterQuests(quests, { dateFilter: "today" });
-    expect(today.map((quest) => quest.id)).toEqual(["1"]);
-
-    const week = filterQuests(quests, { dateFilter: "week" });
-    expect(week.map((quest) => quest.id)).toEqual(["1", "2"]);
-  });
-
-  it("filters a date range", () => {
-    const ranged = filterQuests(quests, {
-      dateFilter: "range",
-      from: ymd(1),
-      to: ymd(5),
+describe("catalogue filters", () => {
+  it("sends only the filters that are set, trimmed", () => {
+    expect(catalogueQuery(filters({}), 1, NOW)).toEqual({ page: 1, pageSize: 12 });
+    expect(catalogueQuery(filters({ query: "  chess ", category: "Culture" }), 3, NOW)).toEqual({
+      page: 3,
+      pageSize: 12,
+      q: "chess",
+      category: "Culture",
     });
-    expect(ranged.map((quest) => quest.id)).toEqual(["2"]);
   });
 
-  it("picks the soonest upcoming published quest", () => {
-    expect(pickFeaturedQuest(quests).id).toBe("1");
+  it("bounds today and the next 7 days by local midnights", () => {
+    expect(dateWindow(filters({ dateFilter: "today" }), NOW)).toEqual({
+      windowStart: new Date(2026, 10, 4),
+      windowEnd: new Date(2026, 10, 4, 23, 59, 59, 999),
+    });
+    expect(dateWindow(filters({ dateFilter: "week" }), NOW)).toEqual({
+      windowStart: new Date(2026, 10, 4),
+      windowEnd: new Date(2026, 10, 10, 23, 59, 59, 999),
+    });
+  });
+
+  it("allows an open-ended range and rejects one that ends first", () => {
+    expect(dateWindow(filters({ dateFilter: "range", from: "2026-11-10" }), NOW)).toEqual({
+      windowStart: new Date(2026, 10, 10),
+      windowEnd: null,
+    });
+    expect(
+      catalogueQuery(filters({ dateFilter: "range", from: "2026-11-10", to: "2026-11-09" }), 1, NOW)
+    ).toEqual({ error: "The end date must be on or after the start date." });
+  });
+
+  it("keeps a day 23 hours long when the clocks go forward", () => {
+    // Uses the test machine's zone rules, like the browser does. In Europe/Paris
+    // 29 March 2026 lasts 23 hours; in UTC it lasts 24.
+    const { windowStart, windowEnd } = dateWindow(
+      filters({ dateFilter: "range", from: "2026-03-29", to: "2026-03-29" }),
+      NOW
+    );
+    expect(windowStart.getHours()).toBe(0);
+    expect(windowEnd.getHours()).toBe(23);
+    const hours = (windowEnd - windowStart + 1) / 3600000;
+    const offsetChange = (windowStart.getTimezoneOffset() - windowEnd.getTimezoneOffset()) / 60;
+    expect(hours).toBe(24 - offsetChange);
+  });
+
+  it("matches the backend: overlap, keyword in title or description, any-case category", () => {
+    const window = {
+      windowStart: new Date(2026, 10, 10, 13).toISOString(),
+      windowEnd: new Date(2026, 10, 10, 13, 30).toISOString(),
+    };
+    expect(matchesCatalogueQuery(item(), window, NOW)).toBe(true);
+    expect(matchesCatalogueQuery(item(), { q: "LITTER" }, NOW)).toBe(true);
+    expect(matchesCatalogueQuery(item(), { category: "volunteering" }, NOW)).toBe(true);
+    expect(matchesCatalogueQuery(item(), { category: "Sports" }, NOW)).toBe(false);
+    expect(matchesCatalogueQuery(item({ status: "draft" }), {}, NOW)).toBe(false);
+    expect(
+      matchesCatalogueQuery(item({ endsAt: new Date(2026, 10, 4, 15).toISOString() }), {}, NOW)
+    ).toBe(false);
+  });
+
+  it("offers suggested and seen categories without case duplicates", () => {
+    expect(categoryOptions([item({ category: "sports" }), item({ category: "Chess club" })], "Robotics")).toEqual([
+      "Academic",
+      "Arts",
+      "Chess club",
+      "Culture",
+      "Robotics",
+      "Social",
+      "Sports",
+      "Volunteering",
+    ]);
   });
 });
