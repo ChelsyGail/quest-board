@@ -1,5 +1,7 @@
 import logging
+from dataclasses import replace
 from datetime import date
+from datetime import datetime
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -19,6 +21,7 @@ from models.responses.catalogue import ItemListResponse
 from models.responses.catalogue import ItemResponse
 from models.responses.catalogue import ParticipantListResponse
 from models.users import UserRole
+from pydantic import AwareDatetime
 from services.catalogue_service import day_end_utc
 from services.catalogue_service import day_start_utc
 from services.catalogue_service import InvalidTimeWindowError
@@ -129,12 +132,33 @@ def setup_catalogue_router(app: FastAPI, services: Services):
             alias="to",
             description="Keep items that have started by the end of this date (UTC day)",
         ),
+        window_start: AwareDatetime
+        | None = Query(
+            None,
+            description=(
+                "Keep items still running at this instant or later. Use with "
+                "window_end for days in the student's own time zone."
+            ),
+        ),
+        window_end: AwareDatetime
+        | None = Query(
+            None,
+            description="Keep items that have started by this instant",
+        ),
         current_user: CurrentUser = Depends(get_current_user),
     ):
         if from_day and to_day and to_day < from_day:
             return _invalid_date_range()
+        if window_start and window_end and window_end < window_start:
+            return _invalid_window()
+        filters = _filters(q, category, from_day, to_day)
+        filters = replace(
+            filters,
+            window_start=_latest(filters.window_start, window_start),
+            window_end=_earliest(filters.window_end, window_end),
+        )
         result = services.catalogue_service.list_published_items(
-            page, page_size, _filters(q, category, from_day, to_day)
+            page, page_size, filters
         )
         return ItemListResponse(
             data=[_to_resource(r) for r in result.items],
@@ -409,6 +433,27 @@ def _invalid_date_range():
         "to must not be earlier than from.",
         "/query/to",
     )
+
+
+def _invalid_window():
+    return json_api_error_response(
+        ItemErrorResponse,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "invalid_date_range",
+        "Invalid date range",
+        "window_end must not be earlier than window_start.",
+        "/query/window_end",
+    )
+
+
+def _latest(*values: datetime | None) -> datetime | None:
+    present = [value for value in values if value is not None]
+    return max(present) if present else None
+
+
+def _earliest(*values: datetime | None) -> datetime | None:
+    present = [value for value in values if value is not None]
+    return min(present) if present else None
 
 
 def _page_meta(result: ItemPage) -> dict:

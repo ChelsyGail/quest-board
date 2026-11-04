@@ -28,7 +28,11 @@ def read_applied_filenames(connection: Connection) -> set[str]:
 
 
 def split_statements(sql: str) -> list[str]:
-    return [statement.strip() for statement in sql.split(";") if statement.strip()]
+    # Full-line comments may contain ";", which would otherwise split a statement.
+    code = "\n".join(
+        line for line in sql.splitlines() if not line.lstrip().startswith("--")
+    )
+    return [statement.strip() for statement in code.split(";") if statement.strip()]
 
 
 def apply_schema_file(connection: Connection, schema_file: Path) -> None:
