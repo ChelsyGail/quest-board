@@ -1,7 +1,9 @@
 import { useState } from "react";
 import {
+  EMAIL_HINT,
   EMAIL_MAX_LENGTH,
   EMAIL_PATTERN,
+  EMAIL_PLACEHOLDER,
   NAME_MAX_LENGTH,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
@@ -204,10 +206,14 @@ function Signup({ onAuthenticated, onAccountCreated, onBackToLogin }) {
             type="text"
             id="name"
             autoComplete="name"
+            aria-describedby="name-hint"
             value={name}
             onChange={(event) => setName(event.target.value)}
             className={errors.name ? "invalid" : ""}
           />
+          <p className="hint" id="name-hint">
+            This is your QuestBoard username. It can't be changed later.
+          </p>
           <p className="error">{errors.name}</p>
         </div>
 
@@ -216,12 +222,16 @@ function Signup({ onAuthenticated, onAccountCreated, onBackToLogin }) {
           <input
             type="email"
             id="email"
-            placeholder="you@aup.edu"
+            placeholder={EMAIL_PLACEHOLDER}
             autoComplete="email"
+            aria-describedby="email-hint"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             className={errors.email ? "invalid" : ""}
           />
+          <p className="hint" id="email-hint">
+            {EMAIL_HINT}
+          </p>
           <p className="error">{errors.email}</p>
         </div>
 

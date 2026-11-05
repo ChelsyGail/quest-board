@@ -8,6 +8,10 @@ export default defineConfig({
     globals: true,
     setupFiles: "./src/setupTests.js",
     // Tests mock the API client, but the URL must still look configured.
-    env: { VITE_API_BASE_URL: "http://api.test" },
+    env: {
+      VITE_API_BASE_URL: "http://api.test",
+      VITE_QUESTS_ENABLED: "false",
+      VITE_QUESTS_DEMO: "false",
+    },
   },
 });
