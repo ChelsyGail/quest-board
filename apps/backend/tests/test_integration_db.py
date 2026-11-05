@@ -47,10 +47,13 @@ def world():
 
     return {
         "client": client,
+        "services": services,
         "category": f"it-{run}",
         "organizer": account("organizer", organizer=True),
         "other_organizer": account("other", organizer=True),
         "student": account("student"),
+        "student_b": account("student-b"),
+        "run": run,
     }
 
 
@@ -204,3 +207,433 @@ def test_local_day_window_across_daylight_saving_change(world):
 
     assert ids == [early, late]
     assert next_day not in ids and day_before not in ids
+
+
+def create_published_event(world, title: str, starts_at: str, ends_at: str) -> str:
+    client = world["client"]
+    body = {
+        "title": title,
+        "description": "Integration event",
+        "location": "Grand salon",
+        "starts_at": starts_at,
+        "ends_at": ends_at,
+        "time_zone": "Europe/Paris",
+        "category": world["category"],
+    }
+    created = client.post("/events", json=body, headers=world["organizer"])
+    assert created.status_code == 201, created.text
+    item_id = created.json()["data"]["id"]
+    published = client.post(f"/items/{item_id}/publish", headers=world["organizer"])
+    assert published.status_code == 200, published.text
+    return item_id
+
+
+def _user_id_from_auth(services, headers: dict) -> int:
+    token = headers["Authorization"].removeprefix("Bearer ")
+    return services.auth_service.decode_access_token(token).user_id
+
+
+def _count(services, sql: str, **params) -> int:
+    with services.participation_service.engine.connect() as connection:
+        return connection.execute(text(sql), params).scalar_one()
+
+
+def _set_participation_status(services, user_id: int, item_id: int, status_value: str) -> None:
+    with services.participation_service.engine.begin() as connection:
+        updated = connection.execute(
+            text(
+                """
+                UPDATE participations
+                SET status = :status
+                WHERE user_id = :user_id AND item_id = :item_id
+                """
+            ),
+            {"status": status_value, "user_id": user_id, "item_id": int(item_id)},
+        ).rowcount
+        assert updated == 1
+
+
+def test_leave_item_removes_membership_but_keeps_nonempty_group(world):
+    client = world["client"]
+    services = world["services"]
+    item_id = create_published(
+        world,
+        "Leave nonempty group",
+        "2028-07-01T10:00:00+02:00",
+        "2028-07-01T12:00:00+02:00",
+    )
+    assert client.post(f"/items/{item_id}/join", headers=world["student"]).status_code == 201
+    assert client.post(f"/items/{item_id}/join", headers=world["student_b"]).status_code == 201
+    assert client.put(f"/items/{item_id}/saved", headers=world["student"]).status_code == 204
+
+    created = client.post(
+        f"/items/{item_id}/groups",
+        json={"name": f"pair-{world['run']}"},
+        headers=world["student"],
+    )
+    assert created.status_code == 201, created.text
+    group_id = created.json()["data"]["id"]
+    assert (
+        client.post(f"/groups/{group_id}/members", headers=world["student_b"]).status_code
+        == 204
+    )
+
+    left = client.delete(f"/items/{item_id}/join", headers=world["student"])
+    assert left.status_code == 204, left.text
+
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM participations WHERE user_id = :user_id AND item_id = :item_id",
+            user_id=_user_id_from_auth(services, world["student"]),
+            item_id=int(item_id),
+        )
+        == 0
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM group_members WHERE user_id = :user_id AND item_id = :item_id",
+            user_id=_user_id_from_auth(services, world["student"]),
+            item_id=int(item_id),
+        )
+        == 0
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM quest_groups WHERE group_id = :group_id",
+            group_id=int(group_id),
+        )
+        == 1
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM group_members WHERE group_id = :group_id AND user_id = :user_id",
+            group_id=int(group_id),
+            user_id=_user_id_from_auth(services, world["student_b"]),
+        )
+        == 1
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM saved_events WHERE user_id = :user_id AND item_id = :item_id",
+            user_id=_user_id_from_auth(services, world["student"]),
+            item_id=int(item_id),
+        )
+        == 1
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM participations WHERE user_id = :user_id AND item_id = :item_id",
+            user_id=_user_id_from_auth(services, world["student_b"]),
+            item_id=int(item_id),
+        )
+        == 1
+    )
+
+
+def test_leave_item_closes_group_when_last_member(world):
+    client = world["client"]
+    services = world["services"]
+    item_id = create_published(
+        world,
+        "Leave last member",
+        "2028-07-02T10:00:00+02:00",
+        "2028-07-02T12:00:00+02:00",
+    )
+    assert client.post(f"/items/{item_id}/join", headers=world["student"]).status_code == 201
+    created = client.post(
+        f"/items/{item_id}/groups",
+        json={"name": f"solo-{world['run']}"},
+        headers=world["student"],
+    )
+    assert created.status_code == 201, created.text
+    group_id = int(created.json()["data"]["id"])
+
+    assert client.delete(f"/items/{item_id}/join", headers=world["student"]).status_code == 204
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM quest_groups WHERE group_id = :group_id",
+            group_id=group_id,
+        )
+        == 0
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM group_members WHERE group_id = :group_id",
+            group_id=group_id,
+        )
+        == 0
+    )
+
+
+def test_leave_item_without_group_and_leave_event(world):
+    client = world["client"]
+    services = world["services"]
+    quest_id = create_published(
+        world,
+        "Leave without group",
+        "2028-07-03T10:00:00+02:00",
+        "2028-07-03T12:00:00+02:00",
+    )
+    event_id = create_published_event(
+        world,
+        "Leave event RSVP",
+        "2028-07-03T18:00:00+02:00",
+        "2028-07-03T20:00:00+02:00",
+    )
+    student_id = _user_id_from_auth(services, world["student"])
+
+    assert client.post(f"/items/{quest_id}/join", headers=world["student"]).status_code == 201
+    assert client.post(f"/items/{event_id}/join", headers=world["student"]).status_code == 201
+
+    assert client.delete(f"/items/{quest_id}/join", headers=world["student"]).status_code == 204
+    assert client.delete(f"/items/{event_id}/join", headers=world["student"]).status_code == 204
+
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM participations WHERE user_id = :user_id AND item_id = :item_id",
+            user_id=student_id,
+            item_id=int(quest_id),
+        )
+        == 0
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM participations WHERE user_id = :user_id AND item_id = :item_id",
+            user_id=student_id,
+            item_id=int(event_id),
+        )
+        == 0
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM group_members WHERE user_id = :user_id AND item_id = :item_id",
+            user_id=student_id,
+            item_id=int(quest_id),
+        )
+        == 0
+    )
+
+
+def test_refused_leave_preserves_participation_membership_and_saved(world):
+    client = world["client"]
+    services = world["services"]
+    item_id = create_published(
+        world,
+        "Refused leave",
+        "2028-07-04T10:00:00+02:00",
+        "2028-07-04T12:00:00+02:00",
+    )
+    student_id = _user_id_from_auth(services, world["student"])
+    assert client.post(f"/items/{item_id}/join", headers=world["student"]).status_code == 201
+    assert client.put(f"/items/{item_id}/saved", headers=world["student"]).status_code == 204
+    created = client.post(
+        f"/items/{item_id}/groups",
+        json={"name": f"locked-{world['run']}"},
+        headers=world["student"],
+    )
+    assert created.status_code == 201, created.text
+    group_id = int(created.json()["data"]["id"])
+    _set_participation_status(services, student_id, item_id, "pending")
+
+    refused = client.delete(f"/items/{item_id}/join", headers=world["student"])
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["errors"][0]["code"] == "proof_already_submitted"
+
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM participations WHERE user_id = :user_id AND item_id = :item_id AND status = 'pending'",
+            user_id=student_id,
+            item_id=int(item_id),
+        )
+        == 1
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM group_members WHERE group_id = :group_id AND user_id = :user_id",
+            group_id=group_id,
+            user_id=student_id,
+        )
+        == 1
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM quest_groups WHERE group_id = :group_id",
+            group_id=group_id,
+        )
+        == 1
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM saved_events WHERE user_id = :user_id AND item_id = :item_id",
+            user_id=student_id,
+            item_id=int(item_id),
+        )
+        == 1
+    )
+
+
+def test_leave_item_rolls_back_membership_when_participation_delete_fails(world, monkeypatch):
+    client = world["client"]
+    services = world["services"]
+    item_id = create_published(
+        world,
+        "Leave rollback",
+        "2028-07-05T10:00:00+02:00",
+        "2028-07-05T12:00:00+02:00",
+    )
+    student_id = _user_id_from_auth(services, world["student"])
+    assert client.post(f"/items/{item_id}/join", headers=world["student"]).status_code == 201
+    created = client.post(
+        f"/items/{item_id}/groups",
+        json={"name": f"rollback-{world['run']}"},
+        headers=world["student"],
+    )
+    assert created.status_code == 201, created.text
+    group_id = int(created.json()["data"]["id"])
+
+    service = services.participation_service
+    original_begin = service.engine.begin
+
+    class FailingConnection:
+        def __init__(self, connection):
+            self._connection = connection
+
+        def execute(self, statement, *args, **kwargs):
+            sql = str(statement)
+            if "DELETE FROM participations" in sql:
+                raise RuntimeError("forced participation delete failure")
+            return self._connection.execute(statement, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+    class FailingBegin:
+        def __enter__(self):
+            self._cm = original_begin()
+            self._connection = FailingConnection(self._cm.__enter__())
+            return self._connection
+
+        def __exit__(self, exc_type, exc, tb):
+            return self._cm.__exit__(exc_type, exc, tb)
+
+    monkeypatch.setattr(service.engine, "begin", lambda: FailingBegin())
+
+    with pytest.raises(RuntimeError, match="forced participation delete failure"):
+        service.leave_item(student_id, int(item_id))
+
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM participations WHERE user_id = :user_id AND item_id = :item_id",
+            user_id=student_id,
+            item_id=int(item_id),
+        )
+        == 1
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM group_members WHERE group_id = :group_id AND user_id = :user_id",
+            group_id=group_id,
+            user_id=student_id,
+        )
+        == 1
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM quest_groups WHERE group_id = :group_id",
+            group_id=group_id,
+        )
+        == 1
+    )
+
+
+def test_concurrent_leave_item_membership_changes(world):
+    """Two members leaving the same group via leave_item must not leave orphans."""
+    import threading
+
+    client = world["client"]
+    services = world["services"]
+    item_id = create_published(
+        world,
+        "Concurrent leave",
+        "2028-07-06T10:00:00+02:00",
+        "2028-07-06T12:00:00+02:00",
+    )
+    assert client.post(f"/items/{item_id}/join", headers=world["student"]).status_code == 201
+    assert client.post(f"/items/{item_id}/join", headers=world["student_b"]).status_code == 201
+    created = client.post(
+        f"/items/{item_id}/groups",
+        json={"name": f"race-{world['run']}"},
+        headers=world["student"],
+    )
+    assert created.status_code == 201, created.text
+    group_id = int(created.json()["data"]["id"])
+    assert (
+        client.post(f"/groups/{group_id}/members", headers=world["student_b"]).status_code
+        == 204
+    )
+
+    barrier = threading.Barrier(2)
+    results: list[int] = []
+    errors: list[BaseException] = []
+
+    def leave(headers: dict) -> None:
+        try:
+            barrier.wait(timeout=5)
+            response = client.delete(f"/items/{item_id}/join", headers=headers)
+            results.append(response.status_code)
+        except BaseException as error:  # noqa: BLE001 - collect for the main thread
+            errors.append(error)
+
+    threads = [
+        threading.Thread(target=leave, args=(world["student"],)),
+        threading.Thread(target=leave, args=(world["student_b"],)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert errors == []
+    assert results == [204, 204]
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM group_members WHERE group_id = :group_id",
+            group_id=group_id,
+        )
+        == 0
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM quest_groups WHERE group_id = :group_id",
+            group_id=group_id,
+        )
+        == 0
+    )
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM participations WHERE item_id = :item_id",
+            item_id=int(item_id),
+        )
+        == 0
+    )

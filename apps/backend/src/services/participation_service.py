@@ -178,6 +178,10 @@ class ParticipationService:
         and Rejected all mean proof was submitted, and that history has to
         survive (BE-31). When the submissions table lands with the proof
         tickets, this check becomes "a submission exists for this attempt".
+
+        If the student is in a quest group, membership is removed in the same
+        transaction (and the group is closed when they were the last member),
+        so leaving the quest cannot leave a ghost seat behind.
         """
         logger.info("Leaving item", extra={"user_id": user_id, "item_id": item_id})
         with self.engine.begin() as connection:
@@ -201,6 +205,14 @@ class ParticipationService:
                     },
                 )
                 raise ParticipationLockedError
+
+            group_id = self._current_group_id(connection, user_id, item_id)
+            if group_id is not None:
+                # Same locking and cleanup rules as leave_group, in this
+                # transaction: never open a second begin() from here.
+                self._remove_group_member(
+                    connection, user_id=user_id, group_id=group_id, required=False
+                )
 
             connection.execute(
                 text(
@@ -348,29 +360,9 @@ class ParticipationService:
             "Leaving quest group", extra={"user_id": user_id, "group_id": group_id}
         )
         with self.engine.begin() as connection:
-            self._lock_group(connection, group_id)
-            removed = connection.execute(
-                text(
-                    """
-                    DELETE FROM group_members
-                    WHERE group_id = :group_id AND user_id = :user_id
-                    """
-                ),
-                {"group_id": group_id, "user_id": user_id},
-            ).rowcount
-            if removed == 0:
-                raise NotInGroupError
-
-            remaining = connection.execute(
-                text("SELECT COUNT(*) FROM group_members WHERE group_id = :group_id"),
-                {"group_id": group_id},
-            ).scalar_one()
-            if remaining == 0:
-                logger.info("Closing empty quest group", extra={"group_id": group_id})
-                connection.execute(
-                    text("DELETE FROM quest_groups WHERE group_id = :group_id"),
-                    {"group_id": group_id},
-                )
+            self._remove_group_member(
+                connection, user_id=user_id, group_id=group_id, required=True
+            )
 
     def list_group_members(self, group_id: int) -> list[GroupMemberRecord]:
         """Who is in the group. Names only, in the order they joined."""
@@ -456,6 +448,53 @@ class ParticipationService:
             ),
             {"group_id": group_id, "item_id": item_id, "user_id": user_id},
         )
+
+    def _remove_group_member(
+        self,
+        connection,
+        *,
+        user_id: int,
+        group_id: int,
+        required: bool,
+    ) -> None:
+        """Drop a member under a group row lock; close the group if it empties.
+
+        Callers must already be inside a transaction. Locking the group first
+        matches create_group / join_group / leave_group so concurrent membership
+        changes serialize on the same row.
+        """
+        try:
+            self._lock_group(connection, group_id)
+        except GroupNotFoundError:
+            # Another transaction already closed the empty group.
+            if required:
+                raise NotInGroupError
+            return
+
+        removed = connection.execute(
+            text(
+                """
+                DELETE FROM group_members
+                WHERE group_id = :group_id AND user_id = :user_id
+                """
+            ),
+            {"group_id": group_id, "user_id": user_id},
+        ).rowcount
+        if removed == 0:
+            if required:
+                raise NotInGroupError
+            return
+
+        remaining = connection.execute(
+            text("SELECT COUNT(*) FROM group_members WHERE group_id = :group_id"),
+            {"group_id": group_id},
+        ).scalar_one()
+        if remaining == 0:
+            logger.info("Closing empty quest group", extra={"group_id": group_id})
+            connection.execute(
+                text("DELETE FROM quest_groups WHERE group_id = :group_id"),
+                {"group_id": group_id},
+            )
 
     @staticmethod
     def _current_group_id(connection, user_id: int, item_id: int) -> int | None:
