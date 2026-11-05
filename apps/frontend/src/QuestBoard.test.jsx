@@ -349,6 +349,19 @@ describe("Joining and RSVP (QB-90)", () => {
     expect(within(screen.getByRole("list", { name: "Published quests and events" })).getByText("Joined")).toBeInTheDocument();
   });
 
+  it("opens the quest discussion only once the student has joined", async () => {
+    const user = userEvent.setup();
+    joinItem.mockResolvedValue({ id: "p11", itemId: "11", status: "joined" });
+    renderBoard();
+    await open(user);
+
+    const discussion = screen.getByRole("region", { name: "Discussion" });
+    expect(discussion).toHaveTextContent("Only students who joined this quest");
+    await user.click(joinButton());
+    await screen.findByText('You joined "Campus cleanup".');
+    expect(discussion).toHaveTextContent("Quest discussions aren't available yet");
+  });
+
   it("restores the joined status after a refresh from /me/participations", async () => {
     const user = userEvent.setup();
     listMyParticipations.mockResolvedValue([joined(quest())]);

@@ -8,10 +8,13 @@ import {
   resetDemoQuests,
   roleRequestsEnabled,
 } from "./api.js";
+import { resetDemoDiscussions } from "./discussionsDemo.js";
+import JoinedQuests from "./JoinedQuests.jsx";
 import Login from "./Login.jsx";
 import MyQuests from "./MyQuests.jsx";
 import Profile from "./Profile.jsx";
 import QuestBoard from "./QuestBoard.jsx";
+import QuestGrove from "./QuestGrove.jsx";
 import Signup from "./Signup.jsx";
 
 // The session is { token, userId, expiresAt } and is never stored with a password.
@@ -140,9 +143,12 @@ function App() {
   const [profileStatus, setProfileStatus] = useState("loading");
   const [profileError, setProfileError] = useState("");
   const [profileAttempt, setProfileAttempt] = useState(0);
-  // When signed in: "account", "quests", "my-quests", "create-event" or "admin".
+  // When signed in: "account", "quests", "joined", "my-quests", "grove", "create-event" or
+  // "admin".
   const [page, setPage] = useState(defaultSignedInPage);
   const [openCreate, setOpenCreate] = useState(false);
+  // An item opened from My quests, whose details replace that page until Back.
+  const [openedItem, setOpenedItem] = useState(null);
   const [demoVersion, setDemoVersion] = useState(0);
   const [isResettingDemo, setIsResettingDemo] = useState(false);
   const demoMode = questsDemoEnabled();
@@ -154,6 +160,7 @@ function App() {
     setProfileStatus("loading");
     setPage(defaultSignedInPage());
     setOpenCreate(false);
+    setOpenedItem(null);
     setScreen("login");
     setNotice(message);
   }
@@ -218,6 +225,7 @@ function App() {
     setProfileStatus("loading");
     setPage(defaultSignedInPage());
     setOpenCreate(false);
+    setOpenedItem(null);
     setSession(newSession);
     setNotice(message);
   }
@@ -236,12 +244,15 @@ function App() {
   function showPage(name, options = {}) {
     setPage(name);
     setOpenCreate(Boolean(options.openCreate));
+    setOpenedItem(null);
     setNotice("");
   }
 
   async function handleResetDemo() {
     if (isResettingDemo || !demoMode) return;
     setIsResettingDemo(true);
+    setOpenedItem(null);
+    resetDemoDiscussions();
     await resetDemoQuests();
     setDemoVersion((version) => version + 1);
     setIsResettingDemo(false);
@@ -286,11 +297,15 @@ function App() {
     const questsOn = questsEnabled();
     const showAdmin = roles.includes("admin") && roleRequestsEnabled();
     const isOrganizer = roles.includes("organizer");
+    const isStudent = roles.includes("student");
+    const author = { id: session.userId, name: profile?.name || "You" };
 
     const navPages = [];
     if (profileStatus === "loaded" && questsOn) {
       navPages.push({ id: "quests", label: "Quests" });
+      if (isStudent) navPages.push({ id: "joined", label: "My quests" });
       if (isOrganizer) navPages.push({ id: "my-quests", label: "My items" });
+      navPages.push({ id: "grove", label: "Quest Grove" });
     }
 
     // The event form always uses the live API, so it isn't offered in demo mode.
@@ -342,7 +357,39 @@ function App() {
         <QuestBoard
           key={`quests-${demoVersion}`}
           session={session}
-          canJoin={roles.includes("student")}
+          canJoin={isStudent}
+          author={author}
+          onSessionExpired={handleSessionRejected}
+        />
+      );
+    } else if (currentPage === "joined" && openedItem) {
+      body = (
+        <QuestBoard
+          key={`joined-item-${openedItem.id}-${demoVersion}`}
+          session={session}
+          canJoin={isStudent}
+          author={author}
+          initialItem={openedItem}
+          onBack={() => setOpenedItem(null)}
+          backLabel="← My quests"
+          onSessionExpired={handleSessionRejected}
+        />
+      );
+    } else if (currentPage === "joined") {
+      body = (
+        <JoinedQuests
+          key={`joined-${demoVersion}`}
+          session={session}
+          onOpenItem={setOpenedItem}
+          onBrowse={() => showPage("quests")}
+          onSessionExpired={handleSessionRejected}
+        />
+      );
+    } else if (currentPage === "grove") {
+      body = (
+        <QuestGrove
+          key={`grove-${session.userId}-${demoVersion}`}
+          author={author}
           onSessionExpired={handleSessionRejected}
         />
       );

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { getQuestClient, isItemNotFound, questApiUnavailableMessage } from "./api.js";
 import { formatItemWindow } from "./dates.js";
 import { itemKindLabel } from "./format.js";
+import { participationStatusLabel } from "./myQuests.js";
+import QuestDiscussion from "./QuestDiscussion.jsx";
 import { bannerClassName } from "./questBanners.js";
 import {
   EMPTY_FILTERS,
@@ -31,7 +33,17 @@ function countLabel(count) {
 // Published quests and events (GET /items), their details (GET /items/{id}) and joining or
 // RSVPing (POST /items/{id}/join, QB-90). Search, category, dates and paging all happen on
 // the server, so every page is part of the complete filtered catalogue.
-function QuestBoard({ session, canJoin, onSessionExpired }) {
+// `initialItem` opens straight on that item's details, and `onBack` then replaces going
+// back to the list (used when another page opened the item). `author` is { id, name }.
+function QuestBoard({
+  session,
+  canJoin,
+  onSessionExpired,
+  author,
+  initialItem = null,
+  onBack = null,
+  backLabel = "← All quests and events",
+}) {
   const client = getQuestClient(session);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [searchQuery, setSearchQuery] = useState("");
@@ -51,7 +63,7 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
   const [participationAttempt, setParticipationAttempt] = useState(0);
 
   // The item opened from the list, and its current details from the backend.
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(initialItem);
   const [detail, setDetail] = useState({ status: "idle", item: null });
   const [isJoining, setIsJoining] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -75,7 +87,8 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
   }, [filters.query, searchQuery]);
 
   useEffect(() => {
-    if (query.error) return undefined;
+    // Opened on one item from another page: the catalogue isn't shown, so isn't loaded.
+    if (query.error || onBack) return undefined;
     // Cleared when the query changes, so an older response can't replace a newer one.
     let ignore = false;
 
@@ -193,11 +206,21 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
   }
 
   function closeItem() {
+    if (onBack) {
+      onBack();
+      return;
+    }
     setSelected(null);
     setDetail({ status: "idle", item: null });
   }
 
   function itemGone(item) {
+    if (onBack) {
+      // Opened from another page, e.g. an archived item in My quests: keep showing what
+      // that page had rather than leaving it.
+      setDetail({ status: "gone", item: null });
+      return;
+    }
     closeItem();
     setActionError(`"${item.title}" is no longer available.`);
     setLoadAttempt((attempt) => attempt + 1);
@@ -306,85 +329,116 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
   if (selected) {
     const shown = detail.item || selected;
     const isQuest = shown.kind !== "event";
-    const joined = participations.has(shown.id);
+    const participation = participations.get(shown.id);
+    const joined = Boolean(participation);
+    const showStatus = participation && participation.status !== "joined";
+    const withDiscussion = isQuest && canJoin;
     content = (
-      <article className="quest-detail panel" aria-labelledby="quest-detail-title">
-        <button type="button" className="link-button small" onClick={closeItem}>
-          ← All quests and events
-        </button>
-        <div className={`${bannerClassName(shown.category)} quest-detail-banner`} aria-hidden="true">
-          <span className="quest-banner-stamp">{itemKindLabel(shown.kind)}</span>
-        </div>
-        <div className="request-heading quest-detail-heading">
-          <h3 className="section-title" id="quest-detail-title">
-            {shown.title}
-          </h3>
-          {joined && <span className="badge badge-joined">{isQuest ? "Joined" : "Going"}</span>}
-        </div>
-        {detail.status === "loading" && (
-          <p className="small muted" role="status">
-            Checking for the latest details…
-          </p>
-        )}
-        {detail.status === "error" && (
-          <p className="small muted" role="status">
-            These details may be out of date. {detail.error}
-          </p>
-        )}
-        <div className="quest-card-meta">
-          <span className="badge badge-category">{shown.category || "Campus"}</span>
-          {isQuest && <span className="badge badge-points">{shown.pointValue ?? "—"} pts</span>}
-        </div>
-        <dl className="quest-facts small">
-          <dt>When</dt>
-          <dd>{formatItemWindow(shown.startsAt, shown.endsAt, shown.timeZone)}</dd>
-          <dt>Time zone</dt>
-          <dd>{shown.timeZone.replace(/_/g, " ")}</dd>
-          <dt>Where</dt>
-          <dd>{shown.location}</dd>
-          <dt>Category</dt>
-          <dd>{shown.category}</dd>
+      <div className={withDiscussion ? "quest-detail-layout" : undefined}>
+        <article className="quest-detail panel" aria-labelledby="quest-detail-title">
+          <button type="button" className="link-button small" onClick={closeItem}>
+            {backLabel}
+          </button>
+          <div className={`${bannerClassName(shown.category)} quest-detail-banner`} aria-hidden="true">
+            <span className="quest-banner-stamp">{itemKindLabel(shown.kind)}</span>
+          </div>
+          <div className="request-heading quest-detail-heading">
+            <h3 className="section-title" id="quest-detail-title">
+              {shown.title}
+            </h3>
+            {showStatus ? (
+              <span className={`badge status-${participation.status}`}>
+                {participationStatusLabel(participation.status)}
+              </span>
+            ) : (
+              joined && <span className="badge badge-joined">{isQuest ? "Joined" : "Going"}</span>
+            )}
+          </div>
+          {detail.status === "gone" && (
+            <p className="small muted" role="status">
+              This is no longer on the board, so these are the last details we had.
+            </p>
+          )}
+          {detail.status === "loading" && (
+            <p className="small muted" role="status">
+              Checking for the latest details…
+            </p>
+          )}
+          {detail.status === "error" && (
+            <p className="small muted" role="status">
+              These details may be out of date. {detail.error}
+            </p>
+          )}
+          <div className="quest-card-meta">
+            <span className="badge badge-category">{shown.category || "Campus"}</span>
+            {isQuest && <span className="badge badge-points">{shown.pointValue ?? "—"} pts</span>}
+          </div>
+          <dl className="quest-facts small">
+            <dt>When</dt>
+            <dd>{formatItemWindow(shown.startsAt, shown.endsAt, shown.timeZone)}</dd>
+            <dt>Time zone</dt>
+            <dd>{shown.timeZone.replace(/_/g, " ")}</dd>
+            <dt>Where</dt>
+            <dd>{shown.location}</dd>
+            <dt>Category</dt>
+            <dd>{shown.category}</dd>
+            {isQuest && (
+              <>
+                <dt>Points</dt>
+                <dd>{shown.pointValue}</dd>
+              </>
+            )}
+          </dl>
+          <p className="quest-text">{shown.description}</p>
           {isQuest && (
             <>
-              <dt>Points</dt>
-              <dd>{shown.pointValue}</dd>
+              <h4 className="quest-subtitle">How to show you did it</h4>
+              <p className="quest-text">{shown.proofInstructions}</p>
             </>
           )}
-        </dl>
-        <p className="quest-text">{shown.description}</p>
-        {isQuest && (
-          <>
-            <h4 className="quest-subtitle">How to show you did it</h4>
-            <p className="quest-text">{shown.proofInstructions}</p>
-          </>
-        )}
 
-        {joined ? (
-          <p className="message quest-joined">
-            {isQuest ? "You've joined this quest." : "You're going to this event."}
+          {joined ? (
+            <p className="message quest-joined">
+              {participation.status === "pending"
+                ? "You've asked to join. The organizer hasn't approved it yet."
+                : participation.status === "rejected"
+                  ? "The organizer didn't approve your participation."
+                  : isQuest
+                    ? "You've joined this quest."
+                    : "You're going to this event."}
+            </p>
+          ) : detail.status === "gone" ? null : canJoin ? (
+            <button
+              type="button"
+              className="button button-inline"
+              onClick={() => handleJoin(shown)}
+              disabled={isJoining}
+            >
+              {isJoining ? (isQuest ? "Joining…" : "Sending RSVP…") : isQuest ? "Join quest" : "RSVP"}
+            </button>
+          ) : (
+            <p className="hint">Only students can join quests or RSVP to events.</p>
+          )}
+          {!joined && participationStatus === "error" && (
+            <p className="hint">We couldn't check whether you've already joined this one.</p>
+          )}
+          <p className="form-error form-error-left" role="alert">
+            {actionError}
           </p>
-        ) : canJoin ? (
-          <button
-            type="button"
-            className="button button-inline"
-            onClick={() => handleJoin(shown)}
-            disabled={isJoining}
-          >
-            {isJoining ? (isQuest ? "Joining…" : "Sending RSVP…") : isQuest ? "Join quest" : "RSVP"}
-          </button>
-        ) : (
-          <p className="hint">Only students can join quests or RSVP to events.</p>
+          <p className="message message-left" aria-live="polite">
+            {actionMessage}
+          </p>
+        </article>
+        {withDiscussion && (
+          <QuestDiscussion
+            quest={shown}
+            participation={participation}
+            participationStatus={participationStatus}
+            author={author}
+            onSessionExpired={onSessionExpired}
+          />
         )}
-        {!joined && participationStatus === "error" && (
-          <p className="hint">We couldn't check whether you've already joined this one.</p>
-        )}
-        <p className="form-error form-error-left" role="alert">
-          {actionError}
-        </p>
-        <p className="message message-left" aria-live="polite">
-          {actionMessage}
-        </p>
-      </article>
+      </div>
     );
   } else {
     let results;
@@ -592,6 +646,10 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
         </p>
       </>
     );
+  }
+
+  if (onBack) {
+    return <div className="page-stack discovery-page">{content}</div>;
   }
 
   return (

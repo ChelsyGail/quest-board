@@ -40,7 +40,7 @@ vi.mock("./api.js", async (importOriginal) => {
       isDemo: false,
       listMyParticipations: () => listMyParticipations("tok"),
       listPublishedItems: (query) => listPublishedItems(query, "tok"),
-      getItem: vi.fn(),
+      getItem: vi.fn(() => new Promise(() => {})),
       createQuest: vi.fn(),
       joinItem: vi.fn(),
     }),
@@ -385,6 +385,50 @@ describe("Quest navigation (QB-58, QB-60, QB-90)", () => {
     expect(listPublishedItems).toHaveBeenCalledWith({ page: 1, pageSize: 12 }, "tok");
     expect(listMyParticipations).toHaveBeenCalledWith("tok");
     expect(listMyItems).not.toHaveBeenCalled();
+  });
+
+  it("gives students My quests, separate from the board, with details and a way back", async () => {
+    const user = userEvent.setup();
+    questsEnabled.mockReturnValue(true);
+    listPublishedItems.mockResolvedValue({
+      items: [],
+      page: { number: 1, size: 12, totalItems: 0, totalPages: 0 },
+    });
+    const hike = {
+      id: "31",
+      kind: "quest",
+      ownerId: "4",
+      title: "Forest hike",
+      description: "A day in the forest.",
+      location: "Gare de Lyon",
+      startsAt: "2099-05-02T08:00:00Z",
+      endsAt: "2099-05-02T17:00:00Z",
+      timeZone: "Europe/Paris",
+      category: "Sports",
+      proofInstructions: "A summit photo.",
+      pointValue: 40,
+      status: "published",
+    };
+    listMyParticipations.mockResolvedValue([
+      { item: hike, participation: { id: "p1", itemId: "31", status: "approved", joinedAt: "" }, saved: false },
+    ]);
+    storeSession();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "My quests" }));
+    expect(screen.getByRole("button", { name: "My quests" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("button", { name: "My items" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "View quest: Forest hike" }));
+
+    expect(await screen.findByRole("heading", { name: "Forest hike" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Discussion" })).toBeInTheDocument();
+    expect(screen.getByText(/Quest discussions aren't available yet/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "← My quests" }));
+    expect(await screen.findByRole("heading", { name: "My quests" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Quest Grove" }));
+    expect(screen.getByRole("heading", { name: "Quest Grove" })).toBeInTheDocument();
+    expect(screen.getByText(/Quest Grove discussions aren't available yet/)).toBeInTheDocument();
   });
 
   it("keeps account settings available from the account menu", async () => {

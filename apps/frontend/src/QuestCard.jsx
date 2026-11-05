@@ -1,9 +1,11 @@
 import { formatItemWindow } from "./dates.js";
 import { itemKindLabel } from "./format.js";
+import { participationBadgeClass } from "./myQuests.js";
 import { bannerClassName, truncateText } from "./questBanners.js";
 
-// A published quest or event on the board. Points only exist on quests.
-function QuestCard({ quest, joined = false, onView }) {
+// A published quest or event on the board. Points only exist on quests. `statusLabel` names
+// the student's participation status in place of the plain joined badge.
+function QuestCard({ quest, joined = false, participationStatus = "", statusLabel = "", onView }) {
   const isQuest = quest.kind !== "event";
   const actionLabel = isQuest ? "View quest" : "View event";
   return (
@@ -15,7 +17,11 @@ function QuestCard({ quest, joined = false, onView }) {
         <div className="quest-card-meta">
           <span className="badge badge-category">{quest.category || "Campus"}</span>
           {isQuest && <span className="badge badge-points">{quest.pointValue ?? "—"} pts</span>}
-          {joined && <span className="badge badge-joined">{isQuest ? "Joined" : "Going"}</span>}
+          {statusLabel ? (
+            <span className={participationBadgeClass(participationStatus)}>{statusLabel}</span>
+          ) : (
+            joined && <span className="badge badge-joined">{isQuest ? "Joined" : "Going"}</span>
+          )}
         </div>
         <h3 className="quest-card-title">{quest.title}</h3>
         <p className="small muted quest-card-when">

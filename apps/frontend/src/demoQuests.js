@@ -3,7 +3,7 @@
 // mix with real accounts or live requests. Shapes match the live API client.
 import { matchesCatalogueQuery } from "./questFilters.js";
 
-const STORAGE_KEY = "questboard.demo.quests.v3";
+const STORAGE_KEY = "questboard.demo.quests.v4";
 
 function atLocalDay(offsetDays, startHour, startMinute, endHour, endMinute) {
   const start = new Date();
@@ -37,9 +37,13 @@ function seedData() {
   const weekend = atLocalDay(5, 10, 0, 12, 0);
   const nextWeek = atLocalDay(8, 17, 0, 19, 0);
   const later = atLocalDay(12, 15, 0, 17, 0);
+  const twoDayTrip = {
+    startsAt: atLocalDay(5, 9, 0, 9, 0).startsAt,
+    endsAt: atLocalDay(6, 18, 0, 18, 0).endsAt,
+  };
 
   return {
-    nextItemId: 10,
+    nextItemId: 14,
     nextParticipationId: 1,
     items: [
       demoItem({
@@ -121,10 +125,90 @@ function seedData() {
         ...weekend,
         category: "Social",
       }),
+      // Ended items, only seen through a student's own participations.
+      demoItem({
+        id: "demo-9",
+        title: "Library scavenger hunt",
+        description: "Find ten hidden call numbers across the library floors.",
+        location: "Main library",
+        ...atLocalDay(-6, 14, 0, 16, 0),
+        category: "Academic",
+        proofInstructions: "Hand in your completed clue sheet.",
+        pointValue: 35,
+      }),
+      demoItem({
+        id: "demo-10",
+        kind: "event",
+        title: "Welcome week picnic",
+        description: "Start-of-term picnic on the lawn with games and music.",
+        location: "Champ de Mars",
+        ...atLocalDay(-15, 12, 0, 15, 0),
+        category: "Community",
+      }),
+      demoItem({
+        id: "demo-11",
+        kind: "event",
+        title: "Forest hiking trip",
+        description: "Two days in the Fontainebleau forest, with a night at a youth hostel.",
+        location: "Gare de Lyon meeting point",
+        ...twoDayTrip,
+        category: "Sports",
+      }),
+      demoItem({
+        id: "demo-12",
+        title: "Campus photo contest",
+        description: "Submit your best shot of campus life.",
+        location: "Online",
+        ...atLocalDay(-3, 9, 0, 18, 0),
+        category: "Arts",
+        proofInstructions: "Upload one photo.",
+        pointValue: 20,
+      }),
+      demoItem({
+        id: "demo-13",
+        title: "Sunrise yoga",
+        description: "An easy morning session by the river. Mats provided.",
+        location: "Quai d'Orsay steps",
+        ...atLocalDay(5, 7, 30, 8, 30),
+        category: "Sports",
+        proofInstructions: "Check in with the instructor.",
+        pointValue: 15,
+      }),
     ],
-    // Map of userId -> [{ id, itemId, status, joinedAt }]
+    // Map of userId -> [{ id, itemId, status, joinedAt }]. Each demo user starts with
+    // SAMPLE_PARTICIPATIONS so My quests has something to show.
     participationsByUser: {},
+    // Map of userId -> [itemId]: items saved without joining.
+    savedByUser: {},
   };
+}
+
+const SAMPLE_PARTICIPATIONS = [
+  ["demo-2", "joined"],
+  ["demo-5", "approved"],
+  ["demo-7", "pending"],
+  ["demo-8", "joined"],
+  ["demo-9", "approved"],
+  ["demo-10", "joined"],
+  ["demo-11", "joined"],
+  ["demo-12", "rejected"],
+  ["demo-13", "joined"],
+];
+const SAMPLE_SAVED = ["demo-4"];
+
+function userParticipations(store, userId) {
+  if (!store.participationsByUser[userId]) {
+    store.participationsByUser[userId] = SAMPLE_PARTICIPATIONS.map(([itemId, status]) => ({
+      id: `demo-p-${store.nextParticipationId++}`,
+      itemId,
+      userId,
+      status,
+      joinedAt: new Date().toISOString(),
+    }));
+    store.savedByUser[userId] = [...SAMPLE_SAVED];
+    writeStore(store);
+  }
+  return store.participationsByUser[userId];
 }
 
 function readStore() {
@@ -230,15 +314,22 @@ export function demoPublishItem(itemId) {
 
 export function demoListMyParticipations(userId) {
   const store = readStore();
-  const participations = store.participationsByUser[userId] || [];
+  const participations = userParticipations(store, userId);
+  const joinedIds = participations.map((participation) => participation.itemId);
+  const savedOnly = (store.savedByUser[userId] || []).filter((id) => !joinedIds.includes(id));
   return delay(
-    participations
-      .map((participation) => ({
+    [
+      ...participations.map((participation) => ({
         item: store.items.find((item) => item.id === participation.itemId),
         participation,
         saved: false,
-      }))
-      .filter((entry) => entry.item)
+      })),
+      ...savedOnly.map((itemId) => ({
+        item: store.items.find((item) => item.id === itemId),
+        participation: null,
+        saved: true,
+      })),
+    ].filter((entry) => entry.item)
   );
 }
 
@@ -248,7 +339,7 @@ export function demoJoinItem(itemId, userId) {
   if (!item) {
     return demoError("The item does not exist or is not available.", 404, "item_not_found");
   }
-  const participations = store.participationsByUser[userId] || [];
+  const participations = userParticipations(store, userId);
   if (participations.some((participation) => participation.itemId === itemId)) {
     return demoError("You have already joined this item.", 409, "already_joined");
   }

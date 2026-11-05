@@ -1325,3 +1325,773 @@ textarea {
     font-size: 26px;
   }
 }
+
+/* My quests */
+.joined-header {
+  align-items: flex-start;
+}
+
+.joined-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 8px;
+}
+
+.joined-controls .chip-row {
+  margin-top: 0;
+}
+
+.view-toggle {
+  flex: 0 0 auto;
+  min-width: 220px;
+  margin: 0;
+}
+
+.joined-day {
+  margin: 8px 0 4px;
+}
+
+.joined-day-title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* Month calendar */
+.calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: start;
+}
+
+.calendar-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.calendar-month {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+
+.calendar-nav {
+  display: flex;
+  gap: 6px;
+}
+
+.calendar-grid {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 4px;
+}
+
+.calendar-grid th {
+  padding: 4px 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.calendar-grid td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.calendar-day {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-height: 104px;
+  padding: 6px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: #fbfaf6;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.calendar-day:hover {
+  background: #f3efe4;
+}
+
+.calendar-day:focus-visible {
+  outline: 3px solid rgba(40, 99, 79, 0.55);
+  outline-offset: 1px;
+}
+
+.calendar-day.is-outside {
+  color: var(--muted);
+  background: transparent;
+  border-style: dashed;
+}
+
+.calendar-day.is-today {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.calendar-day.is-selected {
+  background: #eef5d8;
+  border-color: #b9cf6d;
+  box-shadow: inset 0 0 0 2px #9fbb4a;
+}
+
+.calendar-date {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.calendar-today-tag {
+  padding: 0 6px;
+  font-size: 11px;
+  color: #fff;
+  background: var(--primary);
+  border-radius: 999px;
+}
+
+.calendar-items {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.calendar-item {
+  overflow: hidden;
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: #e3efe7;
+  border-left: 3px solid var(--primary);
+  border-radius: 4px;
+}
+
+.calendar-item-event {
+  background: #f8e7df;
+  border-left-color: var(--accent);
+}
+
+.calendar-item.is-continuation {
+  border-left-style: dotted;
+  opacity: 0.85;
+}
+
+.calendar-item-time {
+  font-weight: 700;
+}
+
+.calendar-more {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.calendar-hint {
+  margin-top: 10px;
+}
+
+.calendar-day-panel {
+  position: sticky;
+  top: 16px;
+}
+
+.calendar-day-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.calendar-day-entry {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.calendar-day-entry:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.calendar-day-entry p {
+  margin: 2px 0;
+}
+
+.calendar-day-entry-title {
+  font-weight: 700;
+}
+
+/* Discussions */
+.quest-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.quest-detail-layout .quest-detail {
+  max-width: none;
+}
+
+.quest-discussion {
+  margin-top: 0;
+}
+
+.discussion-prototype {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #6a3d12;
+  background: #fff1d6;
+  border: 1px solid #e5c48a;
+  border-radius: var(--radius-sm);
+}
+
+.discussion-locked {
+  margin: 0;
+  padding: 14px;
+  font-size: 14px;
+  background: #f3efe4;
+  border-radius: var(--radius-sm);
+}
+
+.discussion-unavailable p {
+  margin: 0 0 4px;
+}
+
+.discussion-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.discussion-filters {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.discussion-filters .field {
+  max-width: 360px;
+  margin-bottom: 0;
+}
+
+.discussion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.discussion-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.discussion-row:hover {
+  background: #fbfaf6;
+  border-color: #c9c0ae;
+}
+
+.discussion-row.is-selected {
+  background: #eef5d8;
+  border-color: #b9cf6d;
+}
+
+.discussion-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.discussion-row-title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.discussion-row-excerpt {
+  overflow-wrap: anywhere;
+}
+
+.discussion-tag {
+  gap: 6px;
+  color: var(--text);
+  background: #f3efe4;
+  border-color: var(--border);
+}
+
+.discussion-tag-mark {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  background: currentColor;
+}
+
+.discussion-sample {
+  margin-left: 8px;
+  color: #6a3d12;
+  background: #fff1d6;
+}
+
+.discussion-byline {
+  margin: 0 0 6px;
+}
+
+.discussion-author {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.discussion-body {
+  margin: 0;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.discussion-original {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 12px 0 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.discussion-original .section-title {
+  margin: 0;
+}
+
+.discussion-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.discussion-post {
+  padding: 10px 12px;
+  background: #fbfaf6;
+  border: 1px solid #ece6d8;
+  border-radius: var(--radius-sm);
+}
+
+.discussion-original.discussion-post {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0 12px;
+}
+
+.discussion-reply-form,
+.discussion-new {
+  margin-top: 8px;
+}
+
+.discussion-new .section-title {
+  margin: 10px 0 12px;
+}
+
+/* Topic marks: each topic has its own shape as well as its own colour. */
+.grove-shape-campus-life,
+.discussion-tag-campus-life .discussion-tag-mark {
+  color: #3f7d4f;
+  border-radius: 60% 0 60% 0;
+}
+
+.grove-shape-quest-help,
+.discussion-tag-quest-help .discussion-tag-mark {
+  color: #b5683c;
+  border-radius: 50%;
+}
+
+.grove-shape-team-finder,
+.discussion-tag-team-finder .discussion-tag-mark {
+  color: #2f6f86;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
+.grove-shape-ideas,
+.discussion-tag-ideas .discussion-tag-mark {
+  color: #a7871c;
+  clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%);
+}
+
+.grove-shape-general,
+.discussion-tag-general .discussion-tag-mark {
+  color: #7a5c8f;
+  border-radius: 3px;
+}
+
+.discussion-tag-teammates .discussion-tag-mark {
+  color: #2f6f86;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
+.discussion-tag-help .discussion-tag-mark {
+  color: #b5683c;
+  border-radius: 50%;
+}
+
+.discussion-tag-tips .discussion-tag-mark {
+  color: #a7871c;
+  clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%);
+}
+
+/* Quest Grove */
+.grove-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px 20px;
+  margin-bottom: 8px;
+}
+
+.grove-controls > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.grove-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.grove-actions .view-toggle {
+  min-width: 160px;
+}
+
+.grove-actions .button {
+  white-space: nowrap;
+}
+
+.grove-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 18px;
+  align-items: start;
+}
+
+.grove-main {
+  min-width: 0;
+}
+
+.grove-side {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.grove-panel-empty .section-title {
+  margin: 0 0 6px;
+}
+
+.grove-panel-empty .button {
+  margin-top: 12px;
+}
+
+.grove-tree {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1000 / 700;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 35%, rgba(220, 235, 157, 0.35), transparent 60%),
+    linear-gradient(180deg, #fbfaf4 0%, #f4f1e6 100%);
+  border-radius: var(--radius-sm);
+}
+
+.grove-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.grove-ground {
+  fill: #e6dfcd;
+}
+
+.grove-canopy ellipse {
+  fill: rgba(205, 225, 140, 0.13);
+}
+
+.grove-trunk {
+  fill: #7a5a3c;
+}
+
+.grove-branch {
+  fill: none;
+  stroke: #8a6a48;
+  stroke-width: 9;
+  stroke-linecap: round;
+  transition: stroke 0.2s, stroke-width 0.2s, opacity 0.2s;
+}
+
+.grove-branch.is-highlighted {
+  stroke: var(--primary);
+  stroke-width: 13;
+}
+
+.grove-branch.is-dimmed {
+  opacity: 0.35;
+}
+
+.grove-label {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.grove-label-left {
+  transform: translate(calc(-100% - 10px), -50%);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.grove-label-right {
+  transform: translate(10px, -50%);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.grove-label-top {
+  transform: translate(-50%, calc(-100% - 10px));
+}
+
+.grove-topic {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.grove-topic:hover {
+  background: #fff;
+}
+
+.grove-topic.is-selected {
+  background: var(--highlight);
+  border-color: #b9cf6d;
+}
+
+.grove-topic-mark {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  background: currentColor;
+}
+
+.grove-more {
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 999px;
+}
+
+.grove-leaf {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font: inherit;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  transition: transform 0.18s ease, filter 0.18s ease;
+  animation: grove-leaf-in 0.45s ease-out both;
+}
+
+.grove-leaf-shape {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: currentColor;
+}
+
+.grove-leaf-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.grove-leaf:hover,
+.grove-leaf:focus-visible {
+  transform: translate(-50%, -50%) scale(1.18);
+  filter: brightness(1.08);
+}
+
+.grove-leaf:focus-visible {
+  outline: 3px solid var(--text);
+  outline-offset: 3px;
+}
+
+.grove-leaf.is-selected {
+  outline: 3px solid var(--text);
+  outline-offset: 2px;
+}
+
+@keyframes grove-leaf-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -30%) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.grove-tooltip {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 240px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 18px rgba(23, 61, 53, 0.14);
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 26px));
+}
+
+.grove-tooltip.align-start {
+  transform: translate(-20px, calc(-100% - 26px));
+}
+
+.grove-tooltip.align-end {
+  transform: translate(calc(-100% + 20px), calc(-100% - 26px));
+}
+
+.grove-tooltip.below {
+  transform: translate(-50%, 26px);
+}
+
+.grove-tooltip.below.align-start {
+  transform: translate(-20px, 26px);
+}
+
+.grove-tooltip.below.align-end {
+  transform: translate(calc(-100% + 20px), 26px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grove-leaf,
+  .grove-branch {
+    animation: none;
+    transition: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .quest-detail-layout,
+  .calendar-layout,
+  .grove-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .calendar-day-panel,
+  .grove-side {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .calendar-day {
+    min-height: 56px;
+    padding: 4px;
+  }
+
+  .calendar-items .calendar-item {
+    height: 5px;
+    padding: 0;
+    font-size: 0;
+    border-left-width: 0;
+  }
+
+  .calendar-more {
+    font-size: 11px;
+  }
+
+  .calendar-more-word,
+  .calendar-today-tag {
+    display: none;
+  }
+
+  .calendar-day.is-today .calendar-date {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .grove-leaf-shape {
+    width: 26px;
+    height: 26px;
+  }
+}
