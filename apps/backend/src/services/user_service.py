@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from database.connection import create_database_engine
+from models.users import AttendanceVisibility
 from models.users import UserCreate
 from models.users import UserRole
 from models.users import UserUpdate
@@ -30,6 +31,7 @@ class UserRecord:
     email: str
     name: str
     roles: tuple[UserRole, ...]
+    attendance_visibility: AttendanceVisibility
     created_at: datetime
     updated_at: datetime
 
@@ -86,6 +88,8 @@ class UserService:
             changes["email"] = str(changes["email"])
         if "password" in changes:
             changes["password_hash"] = self.password_hash.hash(changes.pop("password"))
+        if "attendance_visibility" in changes:
+            changes["attendance_visibility"] = changes["attendance_visibility"].value
         # if "roles" in changes:
         #   changes["roles"] = self._serialize_roles(changes["roles"])
 
@@ -136,7 +140,8 @@ class UserService:
             row = connection.execute(
                 text(
                     """
-                    SELECT user_id, email, name, password_hash, roles, created_at, updated_at
+                    SELECT user_id, email, name, password_hash, roles, attendance_visibility,
+                           created_at, updated_at
                     FROM users
                     WHERE email = :email AND deleted_at IS NULL
                     """
@@ -157,7 +162,7 @@ class UserService:
         return connection.execute(
             text(
                 """
-                SELECT user_id, email, name, roles, created_at, updated_at
+                SELECT user_id, email, name, roles, attendance_visibility, created_at, updated_at
                 FROM users
                 WHERE user_id = :user_id AND deleted_at IS NULL
                 """
@@ -170,7 +175,7 @@ class UserService:
         return connection.execute(
             text(
                 """
-                SELECT user_id, email, name, roles, created_at, updated_at
+                SELECT user_id, email, name, roles, attendance_visibility, created_at, updated_at
                 FROM users
                 WHERE user_id = :user_id AND deleted_at IS NULL
                 """
@@ -189,6 +194,7 @@ class UserService:
             email=row.email,
             name=row.name,
             roles=tuple(UserRole(role) for role in row.roles.split(",")),
+            attendance_visibility=AttendanceVisibility(row.attendance_visibility),
             created_at=row.created_at,
             updated_at=row.updated_at,
         )

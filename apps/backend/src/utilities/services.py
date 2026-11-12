@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from services.auth_service import AuthService
 from services.catalogue_service import CatalogueService
 from services.health_service import HealthService
+from services.participation_service import ParticipationService
 from services.role_request_service import RoleRequestService
 from services.user_service import UserService
 from utilities.settings import load_auth_settings
@@ -16,6 +17,7 @@ class Services:
     auth_service: AuthService
     role_request_service: RoleRequestService
     catalogue_service: CatalogueService
+    participation_service: ParticipationService
 
 
 def setup_services() -> Services:
@@ -24,6 +26,7 @@ def setup_services() -> Services:
     auth_service = AuthService(load_auth_settings(), user_service)
     role_request_service = RoleRequestService(load_database_settings())
     catalogue_service = CatalogueService(load_database_settings())
+    participation_service = ParticipationService(load_database_settings())
 
     return Services(
         health_service=health_service,
@@ -31,4 +34,5 @@ def setup_services() -> Services:
         auth_service=auth_service,
         role_request_service=role_request_service,
         catalogue_service=catalogue_service,
+        participation_service=participation_service,
     )
