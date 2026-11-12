@@ -1,7 +1,8 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   canSubmitProof,
   getProofClient,
+  proofsMode,
   proofsUnavailableMessage,
   submissionStatusLabel,
   validateProofDraft,
@@ -13,8 +14,30 @@ function revokeUrls(files) {
   }
 }
 
-function ProofSubmit({ session, item, participationStatus, onSessionExpired, onSubmitted }) {
+function ProofSubmit({
+  session,
+  item,
+  participationStatus,
+  onSessionExpired,
+  onSubmitted,
+  onProofState,
+}) {
   const formId = useId();
+  const mode = proofsMode();
+  const client = useMemo(
+    () =>
+      getProofClient({
+        token: session.token,
+        userId: session.userId,
+        userName: session.userName,
+      }),
+    [session.token, session.userId, session.userName, mode]
+  );
+  const onExpiredRef = useRef(onSessionExpired);
+  onExpiredRef.current = onSessionExpired;
+  const onProofStateRef = useRef(onProofState);
+  onProofStateRef.current = onProofState;
+
   const [requirements, setRequirements] = useState(null);
   const [existing, setExisting] = useState(null);
   const [loadStatus, setLoadStatus] = useState("loading");
@@ -28,22 +51,23 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-
-  const client = getProofClient({
-    token: session.token,
-    userId: session.userId,
-    userName: session.userName,
-  });
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const loadedItemRef = useRef(null);
 
   useEffect(() => {
     if (!client || !item) {
       setLoadStatus("unavailable");
+      loadedItemRef.current = null;
+      onProofStateRef.current?.(null);
       return undefined;
     }
     let cancelled = false;
+    const soft = loadedItemRef.current === item.id;
     (async () => {
-      setLoadStatus("loading");
-      setLoadError("");
+      if (!soft) {
+        setLoadStatus("loading");
+        setLoadError("");
+      }
       try {
         const [reqs, submission] = await Promise.all([
           client.requirementsForItem(item),
@@ -52,26 +76,27 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
         if (cancelled) return;
         setRequirements(reqs);
         setExisting(submission);
+        onProofStateRef.current?.(submission);
         if (submission?.status === "rejected") {
           setText(submission.text || "");
         }
+        loadedItemRef.current = item.id;
         setLoadStatus("ready");
       } catch (error) {
         if (cancelled) return;
         if (error.status === 401) {
-          onSessionExpired?.();
+          onExpiredRef.current?.();
           return;
         }
         setLoadError(error.message || "Couldn't load proof details.");
-        setLoadStatus("error");
+        if (!soft) setLoadStatus("error");
       }
     })();
     return () => {
       cancelled = true;
     };
-    // session identity + item id + manual reload; client is derived from flags/session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.token, session.userId, item?.id, onSessionExpired, reloadKey]);
+    // Identity + item + manual reload. Do not depend on onSessionExpired (unstable from App).
+  }, [session.token, session.userId, item?.id, client, reloadKey]);
 
   useEffect(() => () => revokeUrls(photos), [photos]);
 
@@ -110,7 +135,7 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
     existing && (existing.status === "pending" || existing.status === "approved");
   const maySubmit = canSubmitProof(participationStatus) && !locked;
 
-  async function handleSubmit(event) {
+  function requestSubmit(event) {
     event.preventDefault();
     if (submitting || !maySubmit) return;
     const errors = validateProofDraft(requirements, {
@@ -123,10 +148,19 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
       setFormError("Please fix the highlighted fields.");
       return;
     }
+    setFormError("");
+    setConfirmOpen(true);
+  }
+
+  async function confirmSubmit() {
+    if (submitting || !maySubmit) return;
+    setConfirmOpen(false);
     setSubmitting(true);
     setFormError("");
     setNotice("");
     setProgress(5);
+    const userId = session.userId;
+    const itemId = item.id;
     try {
       const activeClient = getProofClient({
         token: session.token,
@@ -142,13 +176,16 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
         },
         setProgress
       );
+      if (userId !== session.userId || itemId !== item.id) return;
       setExisting(submission);
-      setNotice("Proof submitted. Status: Pending.");
+      onProofState?.(submission);
+      setNotice("Proof submitted. Status: Pending review.");
       setReloadKey((value) => value + 1);
       onSubmitted?.(submission);
     } catch (error) {
+      if (userId !== session.userId || itemId !== item.id) return;
       if (error.status === 401) {
-        onSessionExpired?.();
+        onExpiredRef.current?.();
         return;
       }
       if (error.resultUnknown) {
@@ -156,7 +193,10 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
           const again = await client.getMySubmission(item.id);
           if (again) {
             setExisting(again);
-            setNotice("Proof was recorded. Status: " + submissionStatusLabel(again.status) + ".");
+            onProofState?.(again);
+            setNotice(
+              "Proof was recorded. Status: " + submissionStatusLabel(again.status) + "."
+            );
             onSubmitted?.(again);
             return;
           }
@@ -171,8 +211,10 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
       if (error.fieldErrors) setFieldErrors(error.fieldErrors);
       setFormError(error.message || "Couldn't submit proof.");
     } finally {
-      setSubmitting(false);
-      setProgress(0);
+      if (userId === session.userId) {
+        setSubmitting(false);
+        setProgress(0);
+      }
     }
   }
 
@@ -184,10 +226,17 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
     setPhotos(next.slice(0, requirements.maxPhotos || 5));
   }
 
+  const statusLabel =
+    existing?.status === "pending"
+      ? "Pending review"
+      : existing
+        ? submissionStatusLabel(existing.status)
+        : null;
+
   return (
     <section className="section panel proof-panel" aria-labelledby={`${formId}-title`}>
       <h3 className="section-title" id={`${formId}-title`}>
-        Submit proof
+        Proof
       </h3>
       {client.isDemo && (
         <p className="notice" role="note">
@@ -203,30 +252,38 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
 
       {existing && (
         <div className={`proof-status status-${existing.status}`} role="status">
-          <strong>{submissionStatusLabel(existing.status)}</strong>
+          <strong>{statusLabel}</strong>
           {existing.feedback && <p>Moderator feedback: {existing.feedback}</p>}
           {existing.status === "rejected" && (
             <p className="muted">You can update your proof and submit again.</p>
+          )}
+          {existing.status === "approved" && existing.awardedPoints != null && (
+            <p>Awarded points: {existing.awardedPoints}</p>
           )}
         </div>
       )}
 
       {!maySubmit && !locked && (
         <p className="muted" role="status">
-          Join this quest before submitting proof.
+          Join this quest to unlock proof submission.
         </p>
       )}
 
       {locked && (
         <p className="muted" role="status">
           {existing.status === "pending"
-            ? "Your proof is waiting for review."
-            : "This proof was approved."}
+            ? "Your proof is waiting for review. Active discussion is closed; use the after-submission space."
+            : "This proof was approved. You cannot submit again."}
         </p>
       )}
 
       {maySubmit && (
-        <form className="stack-form" onSubmit={handleSubmit} noValidate>
+        <form className="stack-form" onSubmit={requestSubmit} noValidate>
+          <p className="hint" role="note">
+            Submitting proof ends active participation on this quest and moves you to the
+            after-submission discussion (spoilers allowed). You stay on the quest — you are
+            not leaving it.
+          </p>
           {requirements.requiresText && (
             <label className="field">
               <span>Proof text</span>
@@ -234,7 +291,7 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
                 value={text}
                 onChange={(event) => setText(event.target.value)}
                 rows={4}
-                disabled={submitting}
+                disabled={submitting || confirmOpen}
                 aria-invalid={Boolean(fieldErrors.text)}
               />
               {fieldErrors.text && <span className="field-error">{fieldErrors.text}</span>}
@@ -249,7 +306,7 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
                 aria-label="Proof photos"
                 accept={(requirements.allowedPhotoTypes || []).join(",")}
                 multiple
-                disabled={submitting}
+                disabled={submitting || confirmOpen}
                 onChange={(event) => {
                   addPhotos([...event.target.files]);
                   event.target.value = "";
@@ -263,7 +320,7 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
                     <button
                       type="button"
                       className="button button-secondary button-small"
-                      disabled={submitting}
+                      disabled={submitting || confirmOpen}
                       onClick={() => {
                         URL.revokeObjectURL(entry.previewUrl);
                         setPhotos(photos.filter((_, i) => i !== index));
@@ -277,42 +334,38 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
             </fieldset>
           )}
 
-          {(requirements.requiresVideo || true) && (
-            <fieldset className="field">
-              <legend>Video {requirements.requiresVideo ? "(required)" : "(optional)"}</legend>
-              <input
-                type="file"
-                aria-label="Proof video"
-                accept={(requirements.allowedVideoTypes || []).join(",")}
-                disabled={submitting}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (video?.previewUrl) URL.revokeObjectURL(video.previewUrl);
-                  setVideo(
-                    file ? { file, previewUrl: URL.createObjectURL(file) } : null
-                  );
-                  event.target.value = "";
-                }}
-              />
-              {fieldErrors.video && <span className="field-error">{fieldErrors.video}</span>}
-              {video && (
-                <div className="proof-video-preview">
-                  <video src={video.previewUrl} controls width="320" />
-                  <button
-                    type="button"
-                    className="button button-secondary button-small"
-                    disabled={submitting}
-                    onClick={() => {
-                      URL.revokeObjectURL(video.previewUrl);
-                      setVideo(null);
-                    }}
-                  >
-                    Remove video
-                  </button>
-                </div>
-              )}
-            </fieldset>
-          )}
+          <fieldset className="field">
+            <legend>Video {requirements.requiresVideo ? "(required)" : "(optional)"}</legend>
+            <input
+              type="file"
+              aria-label="Proof video"
+              accept={(requirements.allowedVideoTypes || []).join(",")}
+              disabled={submitting || confirmOpen}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (video?.previewUrl) URL.revokeObjectURL(video.previewUrl);
+                setVideo(file ? { file, previewUrl: URL.createObjectURL(file) } : null);
+                event.target.value = "";
+              }}
+            />
+            {fieldErrors.video && <span className="field-error">{fieldErrors.video}</span>}
+            {video && (
+              <div className="proof-video-preview">
+                <video src={video.previewUrl} controls width="320" />
+                <button
+                  type="button"
+                  className="button button-secondary button-small"
+                  disabled={submitting || confirmOpen}
+                  onClick={() => {
+                    URL.revokeObjectURL(video.previewUrl);
+                    setVideo(null);
+                  }}
+                >
+                  Remove video
+                </button>
+              </div>
+            )}
+          </fieldset>
 
           {progress > 0 && (
             <p role="status" aria-live="polite">
@@ -329,9 +382,41 @@ function ProofSubmit({ session, item, participationStatus, onSessionExpired, onS
               {notice}
             </p>
           )}
-          <button type="submit" className="button" disabled={submitting}>
-            {submitting ? "Submitting…" : existing?.status === "rejected" ? "Resubmit proof" : "Submit proof"}
-          </button>
+
+          {confirmOpen ? (
+            <div className="proof-confirm" role="alertdialog" aria-labelledby={`${formId}-confirm`}>
+              <p id={`${formId}-confirm`}>
+                Submit this proof? You will leave the active discussion and open the
+                after-submission space (spoilers allowed). Your draft is kept if you cancel.
+              </p>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="button"
+                  disabled={submitting}
+                  onClick={confirmSubmit}
+                >
+                  {submitting
+                    ? "Submitting…"
+                    : existing?.status === "rejected"
+                      ? "Confirm resubmit"
+                      : "Confirm submit"}
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  disabled={submitting}
+                  onClick={() => setConfirmOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="submit" className="button" disabled={submitting}>
+              {existing?.status === "rejected" ? "Resubmit proof" : "Submit proof"}
+            </button>
+          )}
         </form>
       )}
     </section>

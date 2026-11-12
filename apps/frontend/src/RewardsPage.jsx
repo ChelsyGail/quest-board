@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   eligibilityLabel,
   getRewardsClient,
+  rewardsMode,
   rewardsUnavailableMessage,
 } from "./rewards.js";
 
@@ -29,35 +30,52 @@ function AchievementsSummary({ achievements }) {
   );
 }
 
+function useStableRewardsClient(session) {
+  const mode = rewardsMode();
+  return useMemo(
+    () => getRewardsClient(session),
+    // mode is env-stable for a running DEV session; token/user identity drive reloads.
+    [session?.token, session?.userId, mode]
+  );
+}
+
 export function ProfileAchievements({ session, onSessionExpired }) {
-  const client = getRewardsClient(session);
+  const client = useStableRewardsClient(session);
+  const onExpiredRef = useRef(onSessionExpired);
+  onExpiredRef.current = onSessionExpired;
   const [achievements, setAchievements] = useState(null);
   const [status, setStatus] = useState(client ? "loading" : "unavailable");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!client) return undefined;
+    if (!client) {
+      setStatus("unavailable");
+      setAchievements(null);
+      return undefined;
+    }
     let cancelled = false;
+    setStatus("loading");
+    setError("");
     (async () => {
       try {
         const data = await client.getAchievements();
-        if (!cancelled) {
-          setAchievements(data);
-          setStatus("ready");
-        }
+        if (cancelled) return;
+        setAchievements(data);
+        setStatus("ready");
       } catch (err) {
         if (cancelled) return;
-        if (err.status === 401) onSessionExpired?.();
-        else {
-          setError(err.message || "Couldn't load achievements.");
-          setStatus("error");
+        if (err.status === 401) {
+          onExpiredRef.current?.();
+          return;
         }
+        setError(err.message || "Couldn't load achievements.");
+        setStatus("error");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [client, onSessionExpired, session.userId]);
+  }, [client, session.userId, session.token]);
 
   if (!client) {
     return (
@@ -92,37 +110,65 @@ export function ProfileAchievements({ session, onSessionExpired }) {
 }
 
 function RewardsPage({ session, onSessionExpired }) {
-  const client = getRewardsClient(session);
+  const client = useStableRewardsClient(session);
+  const onExpiredRef = useRef(onSessionExpired);
+  onExpiredRef.current = onSessionExpired;
   const [achievements, setAchievements] = useState(null);
   const [rewards, setRewards] = useState([]);
   const [status, setStatus] = useState(client ? "loading" : "unavailable");
   const [error, setError] = useState("");
   const [claimingId, setClaimingId] = useState(null);
   const [notice, setNotice] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const loadGen = useRef(0);
 
-  async function reload() {
+  async function reload({ soft = false } = {}) {
     if (!client) return;
-    setStatus("loading");
-    setError("");
+    const gen = ++loadGen.current;
+    const userId = session.userId;
+    if (soft && status === "ready") setRefreshing(true);
+    else {
+      setStatus("loading");
+      setError("");
+    }
     try {
       const [ach, list] = await Promise.all([client.getAchievements(), client.listRewards()]);
+      if (gen !== loadGen.current || userId !== session.userId) return;
       setAchievements(ach);
       setRewards(list);
       setStatus("ready");
+      setError("");
     } catch (err) {
+      if (gen !== loadGen.current || userId !== session.userId) return;
       if (err.status === 401) {
-        onSessionExpired?.();
+        onExpiredRef.current?.();
         return;
       }
       setError(err.message || "Couldn't load rewards.");
-      setStatus("error");
+      if (!soft) setStatus("error");
+    } finally {
+      if (gen === loadGen.current) setRefreshing(false);
     }
   }
 
   useEffect(() => {
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, session.userId]);
+    if (!client) {
+      setStatus("unavailable");
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      await reload({ soft: false });
+      if (cancelled) {
+        // reload already finished; generation guard handles stale writes
+      }
+    })();
+    return () => {
+      cancelled = true;
+      loadGen.current += 1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when identity changes
+  }, [client, session.userId, session.token]);
 
   if (!client) {
     return (
@@ -135,29 +181,32 @@ function RewardsPage({ session, onSessionExpired }) {
 
   async function claim(rewardId) {
     if (claimingId) return;
+    const userId = session.userId;
     setClaimingId(rewardId);
     setNotice("");
     setError("");
     try {
       const result = await client.claimReward(rewardId);
+      if (userId !== session.userId) return;
       setAchievements(result.achievements);
       setRewards((current) =>
         current.map((reward) => (reward.id === rewardId ? result.reward : reward))
       );
       setNotice(`Claimed “${result.reward.title}”. Your spendable balance was updated.`);
     } catch (err) {
+      if (userId !== session.userId) return;
       if (err.status === 401) {
-        onSessionExpired?.();
+        onExpiredRef.current?.();
         return;
       }
       if (err.resultUnknown) {
-        await reload();
+        await reload({ soft: true });
         setError("We couldn't confirm the claim. Your balance above was refreshed.");
       } else {
         setError(err.message || "Couldn't claim that reward.");
       }
     } finally {
-      setClaimingId(null);
+      if (userId === session.userId) setClaimingId(null);
     }
   }
 
@@ -167,8 +216,13 @@ function RewardsPage({ session, onSessionExpired }) {
         <h2 className="section-title" id="rewards-title">
           Rewards
         </h2>
-        <button type="button" className="button button-secondary button-small" onClick={reload}>
-          Refresh
+        <button
+          type="button"
+          className="button button-secondary button-small"
+          onClick={() => reload({ soft: true })}
+          disabled={refreshing || status === "loading"}
+        >
+          {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       </div>
       {client.isDemo && (
@@ -184,6 +238,11 @@ function RewardsPage({ session, onSessionExpired }) {
       )}
       {status === "ready" && (
         <>
+          {refreshing && (
+            <p className="muted small" role="status">
+              Refreshing balances…
+            </p>
+          )}
           <AchievementsSummary achievements={achievements} />
           {notice && (
             <p className="notice" role="status">
@@ -236,7 +295,9 @@ function RewardsPage({ session, onSessionExpired }) {
 }
 
 export function OrganizerRewards({ session, onSessionExpired }) {
-  const client = getRewardsClient(session);
+  const client = useStableRewardsClient(session);
+  const onExpiredRef = useRef(onSessionExpired);
+  onExpiredRef.current = onSessionExpired;
   const [mine, setMine] = useState([]);
   const [claims, setClaims] = useState([]);
   const [selectedId, setSelectedId] = useState("");
@@ -251,26 +312,46 @@ export function OrganizerRewards({ session, onSessionExpired }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loadingClaims, setLoadingClaims] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const loadGen = useRef(0);
+  const selectedRef = useRef("");
 
-  async function reload() {
+  async function reload({ soft = false } = {}) {
     if (!client) return;
-    setStatus("loading");
+    const gen = ++loadGen.current;
+    const userId = session.userId;
+    if (soft && status === "ready") setRefreshing(true);
+    else setStatus("loading");
     try {
-      setMine(await client.listMyRewards());
+      const list = await client.listMyRewards();
+      if (gen !== loadGen.current || userId !== session.userId) return;
+      setMine(list);
       setStatus("ready");
+      setError("");
     } catch (err) {
-      if (err.status === 401) onSessionExpired?.();
+      if (gen !== loadGen.current || userId !== session.userId) return;
+      if (err.status === 401) onExpiredRef.current?.();
       else {
         setError(err.message || "Couldn't load your rewards.");
-        setStatus("error");
+        if (!soft) setStatus("error");
       }
+    } finally {
+      if (gen === loadGen.current) setRefreshing(false);
     }
   }
 
   useEffect(() => {
-    reload();
+    if (!client) {
+      setStatus("unavailable");
+      return undefined;
+    }
+    reload({ soft: false });
+    return () => {
+      loadGen.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, session.userId]);
+  }, [client, session.userId, session.token]);
 
   if (!client) {
     return (
@@ -284,6 +365,7 @@ export function OrganizerRewards({ session, onSessionExpired }) {
   async function createReward(event) {
     event.preventDefault();
     if (saving) return;
+    const userId = session.userId;
     setSaving(true);
     setError("");
     setNotice("");
@@ -292,6 +374,7 @@ export function OrganizerRewards({ session, onSessionExpired }) {
         ...form,
         costPoints: Number(form.costPoints),
       });
+      if (userId !== session.userId) return;
       setMine((current) => [...current, created]);
       setNotice(`Created “${created.title}”.`);
       setForm({
@@ -302,29 +385,51 @@ export function OrganizerRewards({ session, onSessionExpired }) {
         requiresApprovedQuest: true,
       });
     } catch (err) {
-      if (err.status === 401) onSessionExpired?.();
+      if (userId !== session.userId) return;
+      if (err.status === 401) onExpiredRef.current?.();
       else setError(err.message || "Couldn't create the reward.");
     } finally {
-      setSaving(false);
+      if (userId === session.userId) setSaving(false);
     }
   }
 
   async function showClaims(rewardId) {
+    if (loadingClaims) return;
+    const userId = session.userId;
+    selectedRef.current = rewardId;
     setSelectedId(rewardId);
     setClaims([]);
+    setLoadingClaims(true);
     try {
-      setClaims(await client.listClaims(rewardId));
+      const list = await client.listClaims(rewardId);
+      if (userId !== session.userId || selectedRef.current !== rewardId) return;
+      setClaims(list);
     } catch (err) {
-      if (err.status === 401) onSessionExpired?.();
+      if (userId !== session.userId || selectedRef.current !== rewardId) return;
+      if (err.status === 401) onExpiredRef.current?.();
       else setError(err.message || "Couldn't load claims.");
+    } finally {
+      if (userId === session.userId && selectedRef.current === rewardId) {
+        setLoadingClaims(false);
+      }
     }
   }
 
   return (
     <section className="section panel" aria-labelledby="org-rewards-title">
-      <h2 className="section-title" id="org-rewards-title">
-        Organizer rewards
-      </h2>
+      <div className="section-heading-row">
+        <h2 className="section-title" id="org-rewards-title">
+          Organizer rewards
+        </h2>
+        <button
+          type="button"
+          className="button button-secondary button-small"
+          onClick={() => reload({ soft: true })}
+          disabled={refreshing || status === "loading"}
+        >
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
       {client.isDemo && (
         <p className="notice" role="note">
           Development sample — organizer rewards stay in this browser tab.
@@ -402,6 +507,7 @@ export function OrganizerRewards({ session, onSessionExpired }) {
               <button
                 type="button"
                 className="button button-secondary button-small"
+                disabled={loadingClaims}
                 onClick={() => showClaims(reward.id)}
               >
                 Claims
@@ -413,7 +519,9 @@ export function OrganizerRewards({ session, onSessionExpired }) {
       {selectedId && (
         <div className="claims-panel" aria-live="polite">
           <h3 className="small-title">Claims for reward #{selectedId}</h3>
-          {claims.length === 0 ? (
+          {loadingClaims ? (
+            <p className="muted">Loading claims…</p>
+          ) : claims.length === 0 ? (
             <p className="muted">No claims yet.</p>
           ) : (
             <ul>

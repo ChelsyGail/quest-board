@@ -176,11 +176,28 @@ function demoClient(session) {
   };
 }
 
+// Same session + mode must yield the same object so effect deps keyed on `client`
+// do not re-fire on every render (that caused the Rewards loading flicker).
+const rewardsClientCache = new Map();
+
+export function clearRewardsClientCache() {
+  rewardsClientCache.clear();
+}
+
 export function getRewardsClient(session) {
+  if (!session?.userId || !session?.token) return null;
   const mode = rewardsMode();
-  if (mode === "demo") return demoClient(session);
-  if (mode === "live") return liveClient(session.token);
-  return null;
+  if (mode === "unavailable") return null;
+  const key = `${mode}|${session.userId}|${session.token}`;
+  const cached = rewardsClientCache.get(key);
+  if (cached) return cached;
+  const client = mode === "demo" ? demoClient(session) : liveClient(session.token);
+  rewardsClientCache.set(key, client);
+  if (rewardsClientCache.size > 24) {
+    const oldest = rewardsClientCache.keys().next().value;
+    rewardsClientCache.delete(oldest);
+  }
+  return client;
 }
 
 export function rewardsUnavailableMessage() {

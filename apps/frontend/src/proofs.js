@@ -267,12 +267,28 @@ function demoClient(session) {
   };
 }
 
+// Same session + mode → same client object (avoids effect loops when deps include client).
+const proofClientCache = new Map();
+
+export function clearProofClientCache() {
+  proofClientCache.clear();
+}
+
 // null when neither the demo nor a live API flag is on.
 export function getProofClient(session) {
+  if (!session?.userId || !session?.token) return null;
   const mode = proofsMode();
-  if (mode === "demo") return demoClient(session);
-  if (mode === "live") return liveClient(session.token);
-  return null;
+  if (mode === "unavailable") return null;
+  const key = `${mode}|${session.userId}|${session.token}|${session.userName || ""}`;
+  const cached = proofClientCache.get(key);
+  if (cached) return cached;
+  const client = mode === "demo" ? demoClient(session) : liveClient(session.token);
+  proofClientCache.set(key, client);
+  if (proofClientCache.size > 24) {
+    const oldest = proofClientCache.keys().next().value;
+    proofClientCache.delete(oldest);
+  }
+  return client;
 }
 
 export function proofsUnavailableMessage() {

@@ -1,17 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getProofClient,
   PROOF_FEEDBACK_MAX,
+  proofsMode,
   proofsUnavailableMessage,
   submissionStatusLabel,
 } from "./proofs.js";
 
 function ModeratorQueue({ session, onSessionExpired }) {
-  const client = getProofClient({
-    token: session.token,
-    userId: session.userId,
-    userName: session.userName,
-  });
+  const mode = proofsMode();
+  const client = useMemo(
+    () =>
+      getProofClient({
+        token: session.token,
+        userId: session.userId,
+        userName: session.userName,
+      }),
+    [session.token, session.userId, session.userName, mode]
+  );
+  const onExpiredRef = useRef(onSessionExpired);
+  onExpiredRef.current = onSessionExpired;
+
   const [rows, setRows] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -21,21 +30,32 @@ function ModeratorQueue({ session, onSessionExpired }) {
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const loadGen = useRef(0);
+  const selectedRef = useRef(null);
 
-  async function loadQueue() {
+  async function loadQueue({ soft = false } = {}) {
     if (!client) {
       setStatus("unavailable");
       return;
     }
-    setStatus("loading");
-    setError("");
+    const gen = ++loadGen.current;
+    const userId = session.userId;
+    if (soft && status === "ready") setRefreshing(true);
+    else {
+      setStatus("loading");
+      setError("");
+    }
     try {
       const list = await client.listPending();
+      if (gen !== loadGen.current || userId !== session.userId) return;
       setRows(list);
       setStatus("ready");
+      setError("");
     } catch (err) {
+      if (gen !== loadGen.current || userId !== session.userId) return;
       if (err.status === 401) {
-        onSessionExpired?.();
+        onExpiredRef.current?.();
         return;
       }
       if (err.status === 403) {
@@ -43,14 +63,23 @@ function ModeratorQueue({ session, onSessionExpired }) {
       } else {
         setError(err.message || "Couldn't load the queue.");
       }
-      setStatus("error");
+      if (!soft) setStatus("error");
+    } finally {
+      if (gen === loadGen.current) setRefreshing(false);
     }
   }
 
   useEffect(() => {
-    loadQueue();
+    if (!client) {
+      setStatus("unavailable");
+      return undefined;
+    }
+    loadQueue({ soft: false });
+    return () => {
+      loadGen.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, session.userId]);
+  }, [client, session.userId, session.token]);
 
   useEffect(() => {
     if (!client || !selectedId) {
@@ -58,24 +87,24 @@ function ModeratorQueue({ session, onSessionExpired }) {
       return undefined;
     }
     let cancelled = false;
+    const requestId = selectedId;
     (async () => {
       try {
         const submission = await client.getModerationSubmission(selectedId);
-        if (!cancelled) {
-          setDetail(submission);
-          setFeedback("");
-          setActionError("");
-        }
+        if (cancelled || selectedRef.current !== requestId) return;
+        setDetail(submission);
+        setFeedback("");
+        setActionError("");
       } catch (err) {
-        if (cancelled) return;
-        if (err.status === 401) onSessionExpired?.();
+        if (cancelled || selectedRef.current !== requestId) return;
+        if (err.status === 401) onExpiredRef.current?.();
         else setActionError(err.message || "Couldn't open that submission.");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [client, selectedId, onSessionExpired]);
+  }, [client, selectedId]);
 
   if (!client) {
     return (
@@ -98,6 +127,8 @@ function ModeratorQueue({ session, onSessionExpired }) {
       setActionError(`Keep feedback under ${PROOF_FEEDBACK_MAX + 1} characters.`);
       return;
     }
+    const detailId = detail.id;
+    const userId = session.userId;
     setBusy(true);
     setActionError("");
     setNotice("");
@@ -106,28 +137,37 @@ function ModeratorQueue({ session, onSessionExpired }) {
         kind === "approve"
           ? await client.approve(detail.id)
           : await client.reject(detail.id, feedback.trim());
+      if (userId !== session.userId || selectedRef.current !== detailId) return;
       setNotice(
         `Marked ${submissionStatusLabel(updated.status).toLowerCase()}. The student will see this on their quest.`
       );
+      selectedRef.current = null;
       setSelectedId(null);
       setDetail(null);
-      await loadQueue();
+      await loadQueue({ soft: true });
     } catch (err) {
+      if (userId !== session.userId) return;
       if (err.status === 401) {
-        onSessionExpired?.();
+        onExpiredRef.current?.();
         return;
       }
       if (err.code === "already_reviewed") {
         setActionError("Someone else already reviewed this submission.");
-        await loadQueue();
+        await loadQueue({ soft: true });
+        selectedRef.current = null;
         setSelectedId(null);
         setDetail(null);
       } else {
         setActionError(err.message || "Couldn't save that decision.");
       }
     } finally {
-      setBusy(false);
+      if (userId === session.userId) setBusy(false);
     }
+  }
+
+  function selectRow(id) {
+    selectedRef.current = id;
+    setSelectedId(id);
   }
 
   return (
@@ -137,8 +177,13 @@ function ModeratorQueue({ session, onSessionExpired }) {
           <h2 className="section-title" id="mod-queue-title">
             Pending proof
           </h2>
-          <button type="button" className="button button-secondary button-small" onClick={loadQueue}>
-            Refresh
+          <button
+            type="button"
+            className="button button-secondary button-small"
+            onClick={() => loadQueue({ soft: true })}
+            disabled={refreshing || status === "loading"}
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
         {client.isDemo && (
@@ -168,7 +213,7 @@ function ModeratorQueue({ session, onSessionExpired }) {
                 <button
                   type="button"
                   className={selectedId === row.id ? "moderation-row active" : "moderation-row"}
-                  onClick={() => setSelectedId(row.id)}
+                  onClick={() => selectRow(row.id)}
                 >
                   <strong>{row.itemTitle || `Quest #${row.itemId}`}</strong>
                   <span className="muted">

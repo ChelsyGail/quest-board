@@ -51,10 +51,29 @@ describe("ProofSubmit", () => {
     await user.type(text, "Bag filled.");
     const photo = new File([new Uint8Array(30)], "bag.png", { type: "image/png" });
     await user.upload(screen.getByLabelText("Proof photos"), photo);
-    await user.click(screen.getByRole("button", { name: /Submit proof/i }));
+    await user.click(screen.getByRole("button", { name: /^Submit proof$/i }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(/after-submission/i);
+    await user.click(screen.getByRole("button", { name: /Confirm submit/i }));
 
     await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
     expect(onSubmitted.mock.calls[0][0].status).toBe("pending");
-    expect(await screen.findByText(/Pending/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Pending review/i)).toBeInTheDocument();
+  });
+
+  it("keeps the draft when confirmation is cancelled", async () => {
+    vi.stubEnv("VITE_PROOFS_DEMO", "true");
+    await demoJoinItem("demo-1", SESSION.userId);
+    const user = userEvent.setup();
+    render(
+      <ProofSubmit session={SESSION} item={ITEM} participationStatus="joined" />
+    );
+    const text = await screen.findByLabelText(/Proof text/i);
+    await user.type(text, "Keep this draft.");
+    const photo = new File([new Uint8Array(30)], "bag.png", { type: "image/png" });
+    await user.upload(screen.getByLabelText("Proof photos"), photo);
+    await user.click(screen.getByRole("button", { name: /^Submit proof$/i }));
+    await user.click(screen.getByRole("button", { name: /Cancel/i }));
+    expect(screen.getByLabelText(/Proof text/i)).toHaveValue("Keep this draft.");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 });

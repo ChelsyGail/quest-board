@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { eligibilityLabel, getRewardsClient, rewardsMode } from "./rewards.js";
+import {
+  clearRewardsClientCache,
+  eligibilityLabel,
+  getRewardsClient,
+  rewardsMode,
+} from "./rewards.js";
 import { demoAwardPoints, resetDemoRewards } from "./rewardsDemo.js";
 
 describe("rewards helpers", () => {
@@ -14,6 +19,7 @@ describe("rewards demo adapter", () => {
   beforeEach(() => {
     sessionStorage.clear();
     resetDemoRewards();
+    clearRewardsClientCache();
     vi.stubEnv("DEV", true);
     vi.stubEnv("VITE_REWARDS_DEMO", "true");
     vi.stubEnv("VITE_REWARDS_API", "false");
@@ -21,8 +27,14 @@ describe("rewards demo adapter", () => {
 
   it("stays unavailable without the demo flag", () => {
     vi.stubEnv("VITE_REWARDS_DEMO", "false");
+    clearRewardsClientCache();
     expect(rewardsMode()).toBe("unavailable");
     expect(getRewardsClient({ userId: "1", token: "t" })).toBeNull();
+  });
+
+  it("keeps client identity stable for the same session", () => {
+    const session = { userId: "42", token: "tok" };
+    expect(getRewardsClient(session)).toBe(getRewardsClient(session));
   });
 
   it("claims only when the server-side demo ledger says eligible", async () => {
