@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getQuestClient, isItemNotFound, questApiUnavailableMessage } from "./api.js";
 import { formatItemWindow } from "./dates.js";
+import { resolveQuestDiscussionPhase } from "./discussions.js";
 import { itemKindLabel } from "./format.js";
 import { participationStatusLabel } from "./myQuests.js";
 import QuestDiscussion from "./QuestDiscussion.jsx";
@@ -338,6 +339,12 @@ function QuestBoard({
     const joined = Boolean(participation);
     const showStatus = displayStatus && displayStatus !== "joined";
     const withWorkspace = isQuest && canJoin;
+    const discussionPhase = resolveQuestDiscussionPhase(
+      participation,
+      participationStatus,
+      proofSubmission
+    );
+    const discussionSpace = discussionPhase.phase === "submitted" ? "submitted" : "active";
     const proofParticipationStatus =
       proofSubmission?.status === "pending" || proofSubmission?.status === "approved"
         ? proofSubmission.status
@@ -350,16 +357,16 @@ function QuestBoard({
         className={`quest-detail panel${withWorkspace ? " quest-workspace-main" : ""}`}
         aria-labelledby="quest-detail-title"
       >
-        <button type="button" className="link-button small" onClick={closeItem}>
-          {backLabel}
-        </button>
-        <div className={`${bannerClassName(shown.category)} quest-detail-banner`} aria-hidden="true">
+        <div
+          className={`${bannerClassName(shown.category)} quest-detail-banner quest-detail-banner-hero`}
+          aria-hidden="true"
+        >
           <span className="quest-banner-stamp">{itemKindLabel(shown.kind)}</span>
         </div>
         <div className="request-heading quest-detail-heading">
-          <h3 className="section-title" id="quest-detail-title">
+          <h2 className="quest-detail-title" id="quest-detail-title">
             {shown.title}
-          </h3>
+          </h2>
           {showStatus ? (
             <span className={`badge status-${displayStatus}`}>
               {displayStatus === "pending" && isQuest
@@ -385,44 +392,52 @@ function QuestBoard({
             These details may be out of date. {detail.error}
           </p>
         )}
-        <div className="quest-card-meta">
-          <span className="badge badge-category">{shown.category || "Campus"}</span>
-          {isQuest && <span className="badge badge-points">{shown.pointValue ?? "—"} pts</span>}
-        </div>
-        <dl className="quest-facts small">
-          <dt>When</dt>
-          <dd>{formatItemWindow(shown.startsAt, shown.endsAt, shown.timeZone)}</dd>
-          <dt>Time zone</dt>
-          <dd>{shown.timeZone.replace(/_/g, " ")}</dd>
-          <dt>Where</dt>
-          <dd>{shown.location}</dd>
-          <dt>Category</dt>
-          <dd>{shown.category}</dd>
+        <ul className="quest-summary" aria-label="Quest summary">
+          <li>
+            <span className="quest-summary-label">When</span>
+            <span>{formatItemWindow(shown.startsAt, shown.endsAt, shown.timeZone)}</span>
+          </li>
+          <li>
+            <span className="quest-summary-label">Where</span>
+            <span>{shown.location}</span>
+          </li>
+          <li>
+            <span className="quest-summary-label">Category</span>
+            <span>{shown.category || "Campus"}</span>
+          </li>
           {isQuest && (
-            <>
-              <dt>Points</dt>
-              <dd>{shown.pointValue}</dd>
-            </>
+            <li>
+              <span className="quest-summary-label">Points</span>
+              <span>{shown.pointValue ?? "—"}</span>
+            </li>
           )}
-        </dl>
-        <p className="quest-text">{shown.description}</p>
-        {isQuest && (
-          <>
-            <h4 className="quest-subtitle">How to show you did it</h4>
-            <p className="quest-text">{shown.proofInstructions}</p>
-          </>
+          <li>
+            <span className="quest-summary-label">Time zone</span>
+            <span>{shown.timeZone.replace(/_/g, " ")}</span>
+          </li>
+        </ul>
+        <div className="quest-detail-body">
+          <p className="quest-text">{shown.description}</p>
+          {isQuest && (
+            <div className="quest-proof-block">
+              <h3 className="quest-subtitle">How to show you did it</h3>
+              <p className="quest-text">{shown.proofInstructions}</p>
+            </div>
+          )}
+        </div>
+        {joined && isQuest && displayStatus === "pending" && (
+          <p className="message quest-joined" role="status">
+            Your proof is pending review.
+          </p>
         )}
-        {joined && (
-          <p className="message quest-joined">
-            {displayStatus === "pending" && isQuest
-              ? "Your proof is pending review. Active discussion is closed; after-submission discussion is open."
-              : displayStatus === "rejected" && isQuest
-                ? "Your proof was rejected. You can read the feedback and submit again. After-submission discussion stays open."
-                : displayStatus === "approved" && isQuest
-                  ? "Your proof was approved."
-                  : isQuest
-                    ? "You've joined this quest. Submit proof when you're ready."
-                    : "You're going to this event."}
+        {joined && isQuest && displayStatus === "rejected" && (
+          <p className="message quest-joined" role="status">
+            Your proof was rejected. Check feedback on the proof panel to resubmit.
+          </p>
+        )}
+        {joined && isQuest && displayStatus === "approved" && (
+          <p className="message quest-joined" role="status">
+            Your proof was approved.
           </p>
         )}
         <p className="form-error form-error-left" role="alert">
@@ -511,22 +526,27 @@ function QuestBoard({
       <aside className="quest-workspace-discussions" aria-label="Quest discussions">
         <QuestDiscussion
           quest={shown}
-          space="active"
+          space={discussionSpace}
           participation={participation}
           participationStatus={participationStatus}
           proofSubmission={proofSubmission}
           author={author}
           onSessionExpired={onSessionExpired}
+          compact
+          showPrototypeNotice={false}
         />
-        <QuestDiscussion
-          quest={shown}
-          space="submitted"
-          participation={participation}
-          participationStatus={participationStatus}
-          proofSubmission={proofSubmission}
-          author={author}
-          onSessionExpired={onSessionExpired}
-        />
+        {discussionSpace === "active" && (
+          <p className="discussion-alt-hint muted small">
+            After you submit proof, a separate after-submission discussion unlocks (spoilers
+            allowed).
+          </p>
+        )}
+        {discussionSpace === "submitted" && (
+          <p className="discussion-alt-hint muted small">
+            The active participants discussion is closed so spoilers stay out of unfinished
+            quests.
+          </p>
+        )}
       </aside>
     ) : null;
 
@@ -747,6 +767,19 @@ function QuestBoard({
           {actionError}
         </p>
       </>
+    );
+  }
+
+  if (selected) {
+    return (
+      <div className="page-stack quest-workspace-page">
+        <nav className="quest-workspace-crumb" aria-label="Breadcrumb">
+          <button type="button" className="link-button" onClick={closeItem}>
+            {backLabel}
+          </button>
+        </nav>
+        {content}
+      </div>
     );
   }
 

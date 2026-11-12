@@ -458,10 +458,20 @@ function App() {
       <div className="app-shell">
         {demoMode && (
           <div className="demo-banner" role="status">
-            <span>
-              <strong>Demo mode — sample data.</strong> Quest actions stay in this browser tab and
-              never call the API.
-            </span>
+            <div className="demo-banner-copy">
+              <span>
+                <strong>Demo mode — sample data.</strong> Quest, proof, reward and discussion
+                actions stay in this browser tab.
+              </span>
+              <details className="demo-banner-details">
+                <summary>About sample data</summary>
+                <p>
+                  Posts, proof uploads and reward claims are not shared with other users and are
+                  cleared when this tab closes or you reset demo data. Login still uses the real
+                  API. Production builds hide these sample adapters.
+                </p>
+              </details>
+            </div>
             <button
               type="button"
               className="button button-secondary button-small"

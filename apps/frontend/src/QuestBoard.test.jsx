@@ -303,7 +303,7 @@ describe("Item details", () => {
     expect(screen.queryByText("Points")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "RSVP" }));
-    expect(await screen.findByText("You're going to this event.")).toBeInTheDocument();
+    expect(await screen.findByText(/You're going to "Open mic"/)).toBeInTheDocument();
     expect(joinItem).toHaveBeenCalledWith("21", "tok");
   });
 
@@ -342,7 +342,7 @@ describe("Joining and RSVP (QB-90)", () => {
 
     expect(joinItem).toHaveBeenCalledWith("11", "tok");
     expect(await screen.findByText('You joined "Campus cleanup".')).toBeInTheDocument();
-    expect(screen.getByText(/You\'ve joined this quest/)).toBeInTheDocument();
+    expect(screen.getByText('Joined')).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Join quest" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "← All quests and events" }));
@@ -357,9 +357,8 @@ describe("Joining and RSVP (QB-90)", () => {
 
     const active = screen.getByRole("region", { name: "Active participants" });
     expect(active).toHaveTextContent(/Only students who joined this quest/);
-    expect(screen.getByRole("region", { name: /After submission/ })).toHaveTextContent(
-      /submit proof to open the after-submission discussion/
-    );
+    expect(screen.queryByRole("region", { name: /After submission/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/after-submission discussion unlocks/i)).toBeInTheDocument();
     await user.click(joinButton());
     await screen.findByText('You joined "Campus cleanup".');
     expect(active).toHaveTextContent("Quest discussions aren't available yet");
@@ -372,7 +371,7 @@ describe("Joining and RSVP (QB-90)", () => {
 
     await open(user);
 
-    expect(screen.getByText(/You\'ve joined this quest/)).toBeInTheDocument();
+    expect(screen.getByText("Joined")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Join quest" })).not.toBeInTheDocument();
   });
 
@@ -390,7 +389,7 @@ describe("Joining and RSVP (QB-90)", () => {
 
     expect(joinItem).toHaveBeenCalledTimes(1);
     finish({ id: "p11", itemId: "11", status: "joined" });
-    expect(await screen.findByText(/You\'ve joined this quest/)).toBeInTheDocument();
+    expect(await screen.findByText('Joined')).toBeInTheDocument();
   });
 
   it("treats only the already_joined conflict as joined", async () => {
@@ -402,7 +401,7 @@ describe("Joining and RSVP (QB-90)", () => {
     await user.click(joinButton());
 
     expect(await screen.findByText(`You've already joined "Campus cleanup".`)).toBeInTheDocument();
-    expect(screen.getByText(/You\'ve joined this quest/)).toBeInTheDocument();
+    expect(screen.getByText('Joined')).toBeInTheDocument();
   });
 
   it("doesn't treat another conflict as joined", async () => {
@@ -508,7 +507,7 @@ describe("Joining and RSVP (QB-90)", () => {
       await user.click(joinButton());
 
       expect(await screen.findByText('You joined "Campus cleanup".')).toBeInTheDocument();
-      expect(screen.getByText(/You\'ve joined this quest/)).toBeInTheDocument();
+      expect(screen.getByText('Joined')).toBeInTheDocument();
       expect(joinItem).toHaveBeenCalledTimes(1);
     });
 
@@ -540,20 +539,21 @@ describe("Joining and RSVP (QB-90)", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "Use Reload to check before trying again."
       );
-      expect(screen.queryByText(/You\'ve joined this quest/)).not.toBeInTheDocument();
+      expect(screen.queryByText("Joined")).not.toBeInTheDocument();
       expect(joinItem).toHaveBeenCalledTimes(1);
     });
   });
 
-  it("keeps the open item open after Reload", async () => {
+  it("keeps the detail workspace open without the catalogue header", async () => {
     const user = userEvent.setup();
+    listMyParticipations.mockResolvedValue([joined(quest())]);
     renderBoard();
 
     await open(user);
-    listMyParticipations.mockResolvedValue([joined(quest())]);
-    await user.click(screen.getByRole("button", { name: "Reload" }));
 
-    expect(await screen.findByText(/You\'ve joined this quest/)).toBeInTheDocument();
+    expect(await screen.findByText("Joined")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Campus cleanup" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /next campus adventure/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
   });
 });

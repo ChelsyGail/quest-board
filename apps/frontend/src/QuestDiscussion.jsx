@@ -31,23 +31,26 @@ function QuestDiscussion({
   space = "active",
   author,
   onSessionExpired,
+  compact = false,
+  showPrototypeNotice = true,
 }) {
   const access =
     space === "submitted"
       ? questSubmittedDiscussionAccess(participation, participationStatus, proofSubmission)
       : questActiveDiscussionAccess(participation, participationStatus, proofSubmission);
 
-  const titleId = space === "submitted" ? "quest-discussion-submitted-title" : "quest-discussion-active-title";
+  const titleId =
+    space === "submitted" ? "quest-discussion-submitted-title" : "quest-discussion-active-title";
   const heading =
     space === "submitted" ? "After submission — spoilers allowed" : "Active participants";
   const hint =
     space === "submitted"
-      ? "For people who have submitted proof. Spoilers about completing the quest are allowed here."
-      : "Find teammates, ask questions and share tips before you submit proof.";
+      ? "Spoilers about completing the quest are allowed here."
+      : "Find teammates and share tips before you submit proof.";
 
   return (
     <section
-      className={`quest-discussion panel quest-discussion-${space}`}
+      className={`quest-discussion panel quest-discussion-${space}${compact ? " is-compact" : ""}`}
       aria-labelledby={titleId}
     >
       <h3 className="section-title" id={titleId}>
@@ -64,13 +67,22 @@ function QuestDiscussion({
           space={space}
           author={author}
           onSessionExpired={onSessionExpired}
+          compact={compact}
+          showPrototypeNotice={showPrototypeNotice}
         />
       )}
     </section>
   );
 }
 
-function MemberDiscussion({ quest, space, author, onSessionExpired }) {
+function MemberDiscussion({
+  quest,
+  space,
+  author,
+  onSessionExpired,
+  compact,
+  showPrototypeNotice,
+}) {
   const client = getDiscussionClient(author);
   const scope = space === "submitted" ? questSubmittedScope(quest.id) : questActiveScope(quest.id);
   const board = useDiscussionBoard(client, scope, QUEST_CATEGORIES, {
@@ -103,6 +115,7 @@ function MemberDiscussion({ quest, space, author, onSessionExpired }) {
             onChange={board.setFilters}
             categories={QUEST_CATEGORIES}
             searchId={searchId}
+            compact={compact}
           />
           <button type="button" className="button button-small" onClick={() => board.startNew()}>
             New discussion
@@ -122,6 +135,7 @@ function MemberDiscussion({ quest, space, author, onSessionExpired }) {
             categories={QUEST_CATEGORIES}
             onOpen={board.openThread}
             label={listLabel}
+            excerptLength={compact ? 72 : 110}
           />
         </ThreadListState>
       </>
@@ -130,7 +144,7 @@ function MemberDiscussion({ quest, space, author, onSessionExpired }) {
 
   return (
     <>
-      <PrototypeNotice />
+      {showPrototypeNotice && <PrototypeNotice />}
       {content}
     </>
   );

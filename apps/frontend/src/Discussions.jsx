@@ -48,7 +48,47 @@ export function TopicTag({ categories, id }) {
   );
 }
 
-export function DiscussionFilters({ filters, onChange, categories, label = "Categories", searchId }) {
+export function DiscussionFilters({
+  filters,
+  onChange,
+  categories,
+  label = "Categories",
+  searchId,
+  compact = false,
+}) {
+  const topicId = `${searchId}-topic`;
+  if (compact) {
+    return (
+      <div className="discussion-filters discussion-filters-compact">
+        <div className="field filter-search">
+          <label htmlFor={searchId}>Search</label>
+          <input
+            id={searchId}
+            type="search"
+            placeholder="Search threads"
+            value={filters.query}
+            onChange={(event) => onChange({ query: event.target.value })}
+          />
+        </div>
+        <div className="field filter-topic">
+          <label htmlFor={topicId}>Topic</label>
+          <select
+            id={topicId}
+            value={filters.category}
+            onChange={(event) => onChange({ category: event.target.value })}
+          >
+            <option value="">All topics</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="discussion-filters">
       <div className="field filter-search">
@@ -88,7 +128,14 @@ export function DiscussionFilters({ filters, onChange, categories, label = "Cate
   );
 }
 
-export function DiscussionList({ threads, categories, selectedId = null, onOpen, label }) {
+export function DiscussionList({
+  threads,
+  categories,
+  selectedId = null,
+  onOpen,
+  label,
+  excerptLength = 110,
+}) {
   return (
     <ul className="discussion-list" aria-label={label}>
       {threads.map((thread) => (
@@ -104,7 +151,9 @@ export function DiscussionList({ threads, categories, selectedId = null, onOpen,
               <span className="small muted">{replyCountLabel(thread.replyCount)}</span>
             </span>
             <span className="discussion-row-title">{thread.title}</span>
-            <span className="discussion-row-excerpt small muted">{excerpt(thread.body)}</span>
+            <span className="discussion-row-excerpt small muted">
+              {excerpt(thread.body, excerptLength)}
+            </span>
             <span className="small muted">
               {thread.author.name} · {formatPostTime(thread.createdAt)}
               {thread.sample && " · Sample"}

@@ -23,6 +23,8 @@ function ProofSubmit({
   onProofState,
 }) {
   const formId = useId();
+  const photoInputId = `${formId}-photos`;
+  const videoInputId = `${formId}-video`;
   const mode = proofsMode();
   const client = useMemo(
     () =>
@@ -95,16 +97,15 @@ function ProofSubmit({
     return () => {
       cancelled = true;
     };
-    // Identity + item + manual reload. Do not depend on onSessionExpired (unstable from App).
   }, [session.token, session.userId, item?.id, client, reloadKey]);
 
   useEffect(() => () => revokeUrls(photos), [photos]);
 
   if (!client) {
     return (
-      <section className="section panel" aria-labelledby={`${formId}-title`}>
+      <section className="section panel proof-panel" aria-labelledby={`${formId}-title`}>
         <h3 className="section-title" id={`${formId}-title`}>
-          Submit proof
+          Proof
         </h3>
         <p className="muted" role="status">
           {proofsUnavailableMessage()}
@@ -238,16 +239,27 @@ function ProofSubmit({
       <h3 className="section-title" id={`${formId}-title`}>
         Proof
       </h3>
-      {client.isDemo && (
-        <p className="notice" role="note">
-          Development sample — submissions stay in this browser tab and are not shared.
-        </p>
-      )}
-      <p className="muted">{requirements.instructions || "Follow the quest proof instructions."}</p>
-      <ul className="proof-req-list">
-        {requirements.requiresText && <li>Text required</li>}
-        {requirements.requiresPhoto && <li>Photo required</li>}
-        {requirements.requiresVideo && <li>Video required</li>}
+
+      <ul className="proof-req-list" aria-label="Proof requirements">
+        {requirements.requiresText && (
+          <li>
+            Text <span className="proof-req-flag">Required</span>
+          </li>
+        )}
+        {requirements.requiresPhoto && (
+          <li>
+            Photo <span className="proof-req-flag">Required</span>
+          </li>
+        )}
+        {requirements.requiresVideo ? (
+          <li>
+            Video <span className="proof-req-flag">Required</span>
+          </li>
+        ) : (
+          <li>
+            Video <span className="muted small">Optional</span>
+          </li>
+        )}
       </ul>
 
       {existing && (
@@ -272,17 +284,16 @@ function ProofSubmit({
       {locked && (
         <p className="muted" role="status">
           {existing.status === "pending"
-            ? "Your proof is waiting for review. Active discussion is closed; use the after-submission space."
+            ? "Your proof is waiting for review."
             : "This proof was approved. You cannot submit again."}
         </p>
       )}
 
       {maySubmit && (
-        <form className="stack-form" onSubmit={requestSubmit} noValidate>
-          <p className="hint" role="note">
-            Submitting proof ends active participation on this quest and moves you to the
-            after-submission discussion (spoilers allowed). You stay on the quest — you are
-            not leaving it.
+        <form className="stack-form proof-form" onSubmit={requestSubmit} noValidate>
+          <p className="hint proof-switch-hint">
+            Submitting switches you to the after-submission discussion. Details are confirmed
+            before upload.
           </p>
           {requirements.requiresText && (
             <label className="field">
@@ -290,7 +301,7 @@ function ProofSubmit({
               <textarea
                 value={text}
                 onChange={(event) => setText(event.target.value)}
-                rows={4}
+                rows={5}
                 disabled={submitting || confirmOpen}
                 aria-invalid={Boolean(fieldErrors.text)}
               />
@@ -299,10 +310,19 @@ function ProofSubmit({
           )}
 
           {(requirements.requiresPhoto || requirements.maxPhotos > 0) && (
-            <fieldset className="field">
-              <legend>Photos</legend>
+            <div className="field proof-upload">
+              <span className="proof-upload-label" id={`${formId}-photos-label`}>
+                Photos
+              </span>
+              <label className="proof-upload-drop" htmlFor={photoInputId}>
+                <span className="proof-upload-cta">Choose photos</span>
+                <span className="muted small">PNG or JPEG</span>
+              </label>
               <input
+                id={photoInputId}
+                className="proof-upload-input"
                 type="file"
+                aria-labelledby={`${formId}-photos-label`}
                 aria-label="Proof photos"
                 accept={(requirements.allowedPhotoTypes || []).join(",")}
                 multiple
@@ -317,27 +337,43 @@ function ProofSubmit({
                 {photos.map((entry, index) => (
                   <li key={entry.previewUrl}>
                     <img src={entry.previewUrl} alt={`Selected photo ${index + 1}`} />
-                    <button
-                      type="button"
-                      className="button button-secondary button-small"
-                      disabled={submitting || confirmOpen}
-                      onClick={() => {
-                        URL.revokeObjectURL(entry.previewUrl);
-                        setPhotos(photos.filter((_, i) => i !== index));
-                      }}
-                    >
-                      Remove
-                    </button>
+                    <div className="proof-file-meta">
+                      <span className="proof-filename" title={entry.file.name}>
+                        {entry.file.name}
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-secondary button-small"
+                        disabled={submitting || confirmOpen}
+                        onClick={() => {
+                          URL.revokeObjectURL(entry.previewUrl);
+                          setPhotos(photos.filter((_, i) => i !== index));
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
-            </fieldset>
+            </div>
           )}
 
-          <fieldset className="field">
-            <legend>Video {requirements.requiresVideo ? "(required)" : "(optional)"}</legend>
+          <div className="field proof-upload">
+            <span className="proof-upload-label" id={`${formId}-video-label`}>
+              Video {requirements.requiresVideo ? "" : "(optional)"}
+            </span>
+            <label className="proof-upload-drop" htmlFor={videoInputId}>
+              <span className="proof-upload-cta">
+                {video ? "Replace video" : "Choose video"}
+              </span>
+              <span className="muted small">MP4 or similar</span>
+            </label>
             <input
+              id={videoInputId}
+              className="proof-upload-input"
               type="file"
+              aria-labelledby={`${formId}-video-label`}
               aria-label="Proof video"
               accept={(requirements.allowedVideoTypes || []).join(",")}
               disabled={submitting || confirmOpen}
@@ -351,21 +387,26 @@ function ProofSubmit({
             {fieldErrors.video && <span className="field-error">{fieldErrors.video}</span>}
             {video && (
               <div className="proof-video-preview">
-                <video src={video.previewUrl} controls width="320" />
-                <button
-                  type="button"
-                  className="button button-secondary button-small"
-                  disabled={submitting || confirmOpen}
-                  onClick={() => {
-                    URL.revokeObjectURL(video.previewUrl);
-                    setVideo(null);
-                  }}
-                >
-                  Remove video
-                </button>
+                <video src={video.previewUrl} controls />
+                <div className="proof-file-meta">
+                  <span className="proof-filename" title={video.file.name}>
+                    {video.file.name}
+                  </span>
+                  <button
+                    type="button"
+                    className="button button-secondary button-small"
+                    disabled={submitting || confirmOpen}
+                    onClick={() => {
+                      URL.revokeObjectURL(video.previewUrl);
+                      setVideo(null);
+                    }}
+                  >
+                    Remove video
+                  </button>
+                </div>
               </div>
             )}
-          </fieldset>
+          </div>
 
           {progress > 0 && (
             <p role="status" aria-live="polite">
@@ -387,7 +428,8 @@ function ProofSubmit({
             <div className="proof-confirm" role="alertdialog" aria-labelledby={`${formId}-confirm`}>
               <p id={`${formId}-confirm`}>
                 Submit this proof? You will leave the active discussion and open the
-                after-submission space (spoilers allowed). Your draft is kept if you cancel.
+                after-submission space (spoilers allowed). You stay on the quest — you are not
+                leaving it. Your draft is kept if you cancel.
               </p>
               <div className="button-row">
                 <button
