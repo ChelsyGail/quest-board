@@ -4,6 +4,7 @@ from api.auth_router import setup_auth_router
 from api.catalogue_router import setup_catalogue_router
 from api.health_router import setup_health_router
 from api.participation_router import setup_participation_router
+from api.proof_router import setup_proof_router
 from api.role_request_router import setup_role_request_router
 from api.user_router import setup_user_router
 from fastapi import FastAPI
@@ -106,5 +107,6 @@ def setup_app(services: Services) -> FastAPI:
     setup_role_request_router(app, services)
     setup_catalogue_router(app, services)
     setup_participation_router(app, services)
+    setup_proof_router(app, services)
 
     return app

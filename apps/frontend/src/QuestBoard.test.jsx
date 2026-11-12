@@ -395,13 +395,17 @@ describe("Joining and RSVP (QB-90)", () => {
   it("treats only the already_joined conflict as joined", async () => {
     const user = userEvent.setup();
     joinItem.mockRejectedValue(new ApiError("You have already joined this item.", 409, {}, "already_joined"));
+    // Reload after already_joined must return the real participation id for proof.
+    listMyParticipations
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([joined(quest())]);
     renderBoard();
 
     await open(user);
     await user.click(joinButton());
 
     expect(await screen.findByText(`You've already joined "Campus cleanup".`)).toBeInTheDocument();
-    expect(screen.getByText('Joined')).toBeInTheDocument();
+    expect(screen.getByText("Joined")).toBeInTheDocument();
   });
 
   it("doesn't treat another conflict as joined", async () => {

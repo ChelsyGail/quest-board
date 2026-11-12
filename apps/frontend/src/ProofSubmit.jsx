@@ -1,5 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
+  canPreviewPhoto,
+  canPreviewVideo,
   canSubmitProof,
   getProofClient,
   proofsMode,
@@ -17,6 +19,7 @@ function revokeUrls(files) {
 function ProofSubmit({
   session,
   item,
+  participationId,
   participationStatus,
   onSessionExpired,
   onSubmitted,
@@ -50,21 +53,32 @@ function ProofSubmit({
   const [fieldErrors, setFieldErrors] = useState({});
   const [formError, setFormError] = useState("");
   const [progress, setProgress] = useState(0);
+  const [progressIndeterminate, setProgressIndeterminate] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const loadedItemRef = useRef(null);
+  const loadedKeyRef = useRef(null);
+
+  const lookupKey = mode === "live" ? participationId || "" : item?.id || "";
 
   useEffect(() => {
     if (!client || !item) {
       setLoadStatus("unavailable");
-      loadedItemRef.current = null;
+      loadedKeyRef.current = null;
       onProofStateRef.current?.(null);
       return undefined;
     }
+    if (mode === "live" && !participationId) {
+      setLoadStatus("ready");
+      setRequirements(null);
+      setExisting(null);
+      onProofStateRef.current?.(null);
+      setLoadError("");
+      return undefined;
+    }
     let cancelled = false;
-    const soft = loadedItemRef.current === item.id;
+    const soft = loadedKeyRef.current === lookupKey;
     (async () => {
       if (!soft) {
         setLoadStatus("loading");
@@ -73,7 +87,7 @@ function ProofSubmit({
       try {
         const [reqs, submission] = await Promise.all([
           client.requirementsForItem(item),
-          client.getMySubmission(item.id),
+          client.getMySubmission(lookupKey),
         ]);
         if (cancelled) return;
         setRequirements(reqs);
@@ -82,7 +96,7 @@ function ProofSubmit({
         if (submission?.status === "rejected") {
           setText(submission.text || "");
         }
-        loadedItemRef.current = item.id;
+        loadedKeyRef.current = lookupKey;
         setLoadStatus("ready");
       } catch (error) {
         if (cancelled) return;
@@ -97,7 +111,7 @@ function ProofSubmit({
     return () => {
       cancelled = true;
     };
-  }, [session.token, session.userId, item?.id, client, reloadKey]);
+  }, [session.token, session.userId, item?.id, lookupKey, client, reloadKey, mode, participationId]);
 
   useEffect(() => () => revokeUrls(photos), [photos]);
 
@@ -109,6 +123,19 @@ function ProofSubmit({
         </h3>
         <p className="muted" role="status">
           {proofsUnavailableMessage()}
+        </p>
+      </section>
+    );
+  }
+
+  if (mode === "live" && !participationId) {
+    return (
+      <section className="section panel proof-panel" aria-labelledby={`${formId}-title`}>
+        <h3 className="section-title" id={`${formId}-title`}>
+          Proof
+        </h3>
+        <p className="muted" role="status">
+          Join this quest so we can link proof to your participation.
         </p>
       </section>
     );
@@ -159,9 +186,11 @@ function ProofSubmit({
     setSubmitting(true);
     setFormError("");
     setNotice("");
-    setProgress(5);
+    setProgress(0);
+    setProgressIndeterminate(true);
     const userId = session.userId;
     const itemId = item.id;
+    const submitKey = lookupKey;
     try {
       const activeClient = getProofClient({
         token: session.token,
@@ -169,18 +198,23 @@ function ProofSubmit({
         userName: session.userName,
       });
       const submission = await activeClient.submitProof(
-        item.id,
+        submitKey,
         {
           text,
           photos: photos.map((entry) => entry.file),
           video: video?.file || null,
         },
-        setProgress
+        (value) => {
+          setProgressIndeterminate(false);
+          setProgress(value);
+        }
       );
       if (userId !== session.userId || itemId !== item.id) return;
       setExisting(submission);
       onProofState?.(submission);
       setNotice("Proof submitted. Status: Pending review.");
+      setPhotos([]);
+      setVideo(null);
       setReloadKey((value) => value + 1);
       onSubmitted?.(submission);
     } catch (error) {
@@ -189,9 +223,9 @@ function ProofSubmit({
         onExpiredRef.current?.();
         return;
       }
-      if (error.resultUnknown) {
+      if (error.resultUnknown || error.reconcileHint) {
         try {
-          const again = await client.getMySubmission(item.id);
+          const again = await client.getMySubmission(submitKey);
           if (again) {
             setExisting(again);
             onProofState?.(again);
@@ -215,6 +249,7 @@ function ProofSubmit({
       if (userId === session.userId) {
         setSubmitting(false);
         setProgress(0);
+        setProgressIndeterminate(false);
       }
     }
   }
@@ -222,9 +257,15 @@ function ProofSubmit({
   function addPhotos(fileList) {
     const next = [...photos];
     for (const file of fileList) {
-      next.push({ file, previewUrl: URL.createObjectURL(file) });
+      const previewable = canPreviewPhoto(file);
+      next.push({
+        file,
+        previewUrl: previewable ? URL.createObjectURL(file) : null,
+        previewUnavailable: !previewable,
+      });
     }
-    setPhotos(next.slice(0, requirements.maxPhotos || 5));
+    const max = requirements.maxPhotos || 5;
+    setPhotos(next.slice(0, max));
   }
 
   const statusLabel =
@@ -239,6 +280,16 @@ function ProofSubmit({
       <h3 className="section-title" id={`${formId}-title`}>
         Proof
       </h3>
+
+      {requirements?.instructions && (
+        <p className="hint proof-instructions">{requirements.instructions}</p>
+      )}
+      {requirements && requirements.structuredRequirementsSupported === false && (
+        <p className="muted small">
+          Quest requirements are free-text only; structured photo/video flags are not on the
+          server yet. A description, photo or video is enough when the quest allows it.
+        </p>
+      )}
 
       <ul className="proof-req-list" aria-label="Proof requirements">
         {requirements.requiresText && (
@@ -260,6 +311,10 @@ function ProofSubmit({
             Video <span className="muted small">Optional</span>
           </li>
         )}
+        <li>
+          Up to {requirements.maxMedia || 5} files total{" "}
+          <span className="muted small">(photos and video together)</span>
+        </li>
       </ul>
 
       {existing && (
@@ -271,6 +326,24 @@ function ProofSubmit({
           )}
           {existing.status === "approved" && existing.awardedPoints != null && (
             <p>Awarded points: {existing.awardedPoints}</p>
+          )}
+          {existing.photos?.length > 0 && (
+            <ul className="proof-attached-meta" aria-label="Attached photos">
+              {existing.photos.map((photo) => (
+                <li key={photo.id}>
+                  {photo.name}
+                  {photo.previewUnavailable && (
+                    <span className="muted small"> — preview unavailable (private media)</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {existing.video && (
+            <p className="muted small">
+              Video: {existing.video.name}
+              {existing.video.previewUnavailable && " — preview unavailable (private media)"}
+            </p>
           )}
         </div>
       )}
@@ -295,69 +368,76 @@ function ProofSubmit({
             Submitting switches you to the after-submission discussion. Details are confirmed
             before upload.
           </p>
-          {requirements.requiresText && (
-            <label className="field">
-              <span>Proof text</span>
-              <textarea
-                value={text}
-                onChange={(event) => setText(event.target.value)}
-                rows={5}
-                disabled={submitting || confirmOpen}
-                aria-invalid={Boolean(fieldErrors.text)}
-              />
-              {fieldErrors.text && <span className="field-error">{fieldErrors.text}</span>}
-            </label>
-          )}
+          <label className="field">
+            <span>Proof text</span>
+            <textarea
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              rows={5}
+              disabled={submitting || confirmOpen}
+              aria-invalid={Boolean(fieldErrors.text)}
+            />
+            {fieldErrors.text && <span className="field-error">{fieldErrors.text}</span>}
+          </label>
 
-          {(requirements.requiresPhoto || requirements.maxPhotos > 0) && (
-            <div className="field proof-upload">
-              <span className="proof-upload-label" id={`${formId}-photos-label`}>
-                Photos
-              </span>
-              <label className="proof-upload-drop" htmlFor={photoInputId}>
-                <span className="proof-upload-cta">Choose photos</span>
-                <span className="muted small">PNG or JPEG</span>
-              </label>
-              <input
-                id={photoInputId}
-                className="proof-upload-input"
-                type="file"
-                aria-labelledby={`${formId}-photos-label`}
-                aria-label="Proof photos"
-                accept={(requirements.allowedPhotoTypes || []).join(",")}
-                multiple
-                disabled={submitting || confirmOpen}
-                onChange={(event) => {
-                  addPhotos([...event.target.files]);
-                  event.target.value = "";
-                }}
-              />
-              {fieldErrors.photos && <span className="field-error">{fieldErrors.photos}</span>}
-              <ul className="proof-preview-list">
-                {photos.map((entry, index) => (
-                  <li key={entry.previewUrl}>
+          <div className="field proof-upload">
+            <span className="proof-upload-label" id={`${formId}-photos-label`}>
+              Photos
+            </span>
+            <label className="proof-upload-drop" htmlFor={photoInputId}>
+              <span className="proof-upload-cta">Choose photos</span>
+              <span className="muted small">JPEG, PNG, WebP, HEIC (max 10 MB each)</span>
+            </label>
+            <input
+              id={photoInputId}
+              className="proof-upload-input"
+              type="file"
+              aria-labelledby={`${formId}-photos-label`}
+              aria-label="Proof photos"
+              accept={(requirements.allowedPhotoTypes || []).join(",")}
+              multiple
+              disabled={submitting || confirmOpen}
+              onChange={(event) => {
+                addPhotos([...event.target.files]);
+                event.target.value = "";
+              }}
+            />
+            {fieldErrors.photos && <span className="field-error">{fieldErrors.photos}</span>}
+            <ul className="proof-preview-list">
+              {photos.map((entry, index) => (
+                <li key={`${entry.file.name}-${entry.file.lastModified}-${index}`}>
+                  {entry.previewUrl ? (
                     <img src={entry.previewUrl} alt={`Selected photo ${index + 1}`} />
-                    <div className="proof-file-meta">
+                  ) : (
+                    <div className="proof-preview-fallback" role="img" aria-label={entry.file.name}>
                       <span className="proof-filename" title={entry.file.name}>
                         {entry.file.name}
                       </span>
-                      <button
-                        type="button"
-                        className="button button-secondary button-small"
-                        disabled={submitting || confirmOpen}
-                        onClick={() => {
-                          URL.revokeObjectURL(entry.previewUrl);
-                          setPhotos(photos.filter((_, i) => i !== index));
-                        }}
-                      >
-                        Remove
-                      </button>
+                      <span className="muted small">
+                        {entry.file.type || "unknown type"} — preview unavailable in this browser
+                      </span>
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+                  )}
+                  <div className="proof-file-meta">
+                    <span className="proof-filename" title={entry.file.name}>
+                      {entry.file.name}
+                    </span>
+                    <button
+                      type="button"
+                      className="button button-secondary button-small"
+                      disabled={submitting || confirmOpen}
+                      onClick={() => {
+                        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+                        setPhotos(photos.filter((_, i) => i !== index));
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
 
           <div className="field proof-upload">
             <span className="proof-upload-label" id={`${formId}-video-label`}>
@@ -367,7 +447,7 @@ function ProofSubmit({
               <span className="proof-upload-cta">
                 {video ? "Replace video" : "Choose video"}
               </span>
-              <span className="muted small">MP4 or similar</span>
+              <span className="muted small">MP4 or QuickTime (max 100 MB)</span>
             </label>
             <input
               id={videoInputId}
@@ -380,14 +460,34 @@ function ProofSubmit({
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (video?.previewUrl) URL.revokeObjectURL(video.previewUrl);
-                setVideo(file ? { file, previewUrl: URL.createObjectURL(file) } : null);
+                if (!file) {
+                  setVideo(null);
+                } else {
+                  const previewable = canPreviewVideo(file);
+                  setVideo({
+                    file,
+                    previewUrl: previewable ? URL.createObjectURL(file) : null,
+                    previewUnavailable: !previewable,
+                  });
+                }
                 event.target.value = "";
               }}
             />
             {fieldErrors.video && <span className="field-error">{fieldErrors.video}</span>}
             {video && (
               <div className="proof-video-preview">
-                <video src={video.previewUrl} controls />
+                {video.previewUrl ? (
+                  <video src={video.previewUrl} controls />
+                ) : (
+                  <div className="proof-preview-fallback">
+                    <span className="proof-filename" title={video.file.name}>
+                      {video.file.name}
+                    </span>
+                    <span className="muted small">
+                      {video.file.type || "unknown type"} — preview unavailable in this browser
+                    </span>
+                  </div>
+                )}
                 <div className="proof-file-meta">
                   <span className="proof-filename" title={video.file.name}>
                     {video.file.name}
@@ -397,7 +497,7 @@ function ProofSubmit({
                     className="button button-secondary button-small"
                     disabled={submitting || confirmOpen}
                     onClick={() => {
-                      URL.revokeObjectURL(video.previewUrl);
+                      if (video.previewUrl) URL.revokeObjectURL(video.previewUrl);
                       setVideo(null);
                     }}
                   >
@@ -408,9 +508,11 @@ function ProofSubmit({
             )}
           </div>
 
-          {progress > 0 && (
+          {(progress > 0 || progressIndeterminate) && (
             <p role="status" aria-live="polite">
-              Upload progress: {progress}%
+              {progressIndeterminate
+                ? "Uploading…"
+                : `Upload progress: ${progress}%`}
             </p>
           )}
           {formError && (

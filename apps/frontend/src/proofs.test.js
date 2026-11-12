@@ -12,33 +12,41 @@ import { resetDemoQuests, demoJoinItem } from "./demoQuests.js";
 import { resetDemoRewards, demoGetAchievements } from "./rewardsDemo.js";
 
 describe("proof helpers", () => {
-  it("infers photo vs video requirements from instructions", () => {
-    expect(inferRequirements({ proofInstructions: "Upload a photo of the bag." }).requiresPhoto).toBe(
-      true
-    );
-    expect(inferRequirements({ proofInstructions: "Send a short video clip." }).requiresVideo).toBe(
-      true
-    );
+  it("keeps free-text instructions without inventing mandatory photo/video flags", () => {
+    const photoQuest = inferRequirements({ proofInstructions: "Upload a photo of the bag." });
+    expect(photoQuest.requiresPhoto).toBe(false);
+    expect(photoQuest.requiresVideo).toBe(false);
+    expect(photoQuest.structuredRequirementsSupported).toBe(false);
+    expect(photoQuest.instructions).toMatch(/photo/i);
+
+    const videoQuest = inferRequirements({ proofInstructions: "Send a short video clip." });
+    expect(videoQuest.requiresVideo).toBe(false);
+    expect(videoQuest.instructions).toMatch(/video/i);
   });
 
-  it("validates required text and photo", () => {
+  it("validates basic text-or-media and combined file limits", () => {
     const requirements = {
-      requiresText: true,
-      requiresPhoto: true,
+      requiresText: false,
+      requiresPhoto: false,
       requiresVideo: false,
-      maxPhotos: 2,
+      maxMedia: 5,
+      maxPhotos: 5,
       maxPhotoBytes: 1000,
       maxVideoBytes: 1000,
       allowedPhotoTypes: ["image/png"],
       allowedVideoTypes: ["video/mp4"],
     };
     expect(validateProofDraft(requirements, { text: "", photos: [], video: null }).text).toMatch(
-      /text/i
+      /description|photo|video/i
     );
     const photo = new File([new Uint8Array(10)], "shot.png", { type: "image/png" });
     expect(
       Object.keys(validateProofDraft(requirements, { text: "Done", photos: [photo], video: null }))
     ).toEqual([]);
+    const gif = new File([new Uint8Array(10)], "shot.gif", { type: "image/gif" });
+    expect(
+      validateProofDraft(requirements, { text: "Done", photos: [gif], video: null }).photos
+    ).toMatch(/JPEG|PNG|WebP|HEIC/i);
   });
 
   it("allows submit only when joined or rejected", () => {

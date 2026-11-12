@@ -6,10 +6,17 @@ import { demoAwardPoints } from "./rewardsDemo.js";
 const STORAGE_KEY = "questboard.demo.proofs.v1";
 const FEEDBACK_MAX = 2000;
 const MAX_PHOTOS = 5;
-const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 40 * 1024 * 1024;
-const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-const VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
+const MAX_MEDIA = 5;
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+const PHOTO_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+];
+const VIDEO_TYPES = ["video/mp4", "video/quicktime"];
 
 function delay(result, ms = 220) {
   return new Promise((resolve) => setTimeout(() => resolve(result), ms));
@@ -69,6 +76,8 @@ function serializeFiles(photos, video) {
 }
 
 export function demoRequirementsForItem(item) {
+  // Demo keeps soft hints from instruction text for a richer mock; live mode
+  // uses basicRequirements and does not invent mandatory photo/video flags.
   const instructions = (item?.proofInstructions || "").toLowerCase();
   const mentionsPhoto = /photo|image|picture|pic\b/.test(instructions);
   const mentionsVideo = /video|clip|recording/.test(instructions);
@@ -77,40 +86,50 @@ export function demoRequirementsForItem(item) {
     requiresText: true,
     requiresPhoto: mentionsPhoto || !mentionsVideo,
     requiresVideo: mentionsVideo,
+    maxMedia: MAX_MEDIA,
     maxPhotos: MAX_PHOTOS,
     maxPhotoBytes: MAX_PHOTO_BYTES,
     maxVideoBytes: MAX_VIDEO_BYTES,
     allowedPhotoTypes: PHOTO_TYPES,
     allowedVideoTypes: VIDEO_TYPES,
     pointValue: item?.pointValue ?? null,
+    structuredRequirementsSupported: false,
   };
 }
 
 function validateDraft(requirements, { text, photos, video }) {
   const errors = {};
   const trimmed = (text || "").trim();
+  const photoList = photos || [];
+  const mediaCount = photoList.length + (video ? 1 : 0);
   if (requirements.requiresText && !trimmed) errors.text = "Add the text your quest asks for.";
-  if (requirements.requiresPhoto && !(photos || []).length) errors.photos = "Add at least one photo.";
-  if ((photos || []).length > requirements.maxPhotos) {
+  if (requirements.requiresPhoto && !photoList.length) errors.photos = "Add at least one photo.";
+  if (photoList.length > requirements.maxPhotos) {
     errors.photos = `You can attach at most ${requirements.maxPhotos} photos.`;
   }
-  for (const file of photos || []) {
+  if (mediaCount > (requirements.maxMedia || MAX_MEDIA)) {
+    errors.photos = `You can attach at most ${requirements.maxMedia || MAX_MEDIA} files in total (photos and video together).`;
+  }
+  for (const file of photoList) {
     if (!requirements.allowedPhotoTypes.includes(file.type)) {
-      errors.photos = "Use JPEG, PNG, WebP or GIF photos.";
+      errors.photos = "Use JPEG, PNG, WebP, HEIC or HEIF photos.";
       break;
     }
     if (file.size > requirements.maxPhotoBytes) {
-      errors.photos = "One of the photos is too large.";
+      errors.photos = "One of the photos is too large (max 10 MB).";
       break;
     }
   }
   if (requirements.requiresVideo && !video) errors.video = "Add the video your quest asks for.";
   if (video) {
     if (!requirements.allowedVideoTypes.includes(video.type)) {
-      errors.video = "Use an MP4, WebM or QuickTime video.";
+      errors.video = "Use an MP4 or QuickTime video.";
     } else if (video.size > requirements.maxVideoBytes) {
-      errors.video = "That video is too large.";
+      errors.video = "That video is too large (max 100 MB).";
     }
+  }
+  if (!trimmed && mediaCount === 0) {
+    errors.text = "Add a description, a photo or a video before submitting.";
   }
   return errors;
 }

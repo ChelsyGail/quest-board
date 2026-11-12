@@ -84,12 +84,16 @@ def test_catalogue_and_participation_routes_are_registered(services):
         ("GET", "/items/{item_id}/participants"),
         ("POST", "/items/{item_id}/join"),
         ("GET", "/me/participations"),
+        ("POST", "/uploads"),
+        ("POST", "/participations/{participation_id}/submissions"),
+        ("GET", "/participations/{participation_id}/submissions"),
     ]:
         assert route in routes
 
 
-def test_setup_services_builds_the_participation_service(monkeypatch):
+def test_setup_services_builds_the_participation_and_proof_services(monkeypatch, tmp_path):
     from services.participation_service import ParticipationService
+    from services.proof_service import ProofService
     from utilities.services import setup_services
 
     for name, value in {
@@ -98,10 +102,13 @@ def test_setup_services_builds_the_participation_service(monkeypatch):
         "MYSQL_PASSWORD": "unused",
         "MYSQL_DATABASE": "unused",
         "JWT_SECRET_KEY": "unused",
+        "PROOF_MEDIA_DIR": str(tmp_path / "proof-media"),
     }.items():
         monkeypatch.setenv(name, value)
 
-    assert isinstance(setup_services().participation_service, ParticipationService)
+    wired = setup_services()
+    assert isinstance(wired.participation_service, ParticipationService)
+    assert isinstance(wired.proof_service, ProofService)
 
 
 def test_participation_routes_require_a_token(client):

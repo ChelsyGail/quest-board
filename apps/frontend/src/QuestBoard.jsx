@@ -245,7 +245,7 @@ function QuestBoard({
     setParticipations((current) => new Map(current).set(itemId, participation));
   }
 
-  async function checkWhetherJoined(item, error) {
+  async function checkWhetherJoined(item, error, { successMessage } = {}) {
     let list;
     try {
       list = await client.listMyParticipations();
@@ -264,7 +264,7 @@ function QuestBoard({
     const entry = list.find((candidate) => candidate.item.id === item.id && candidate.participation);
     if (entry) {
       markJoined(item.id, entry.participation);
-      setActionMessage(joinedLabel(item));
+      setActionMessage(successMessage || joinedLabel(item));
     } else {
       setActionError(
         `We couldn't confirm whether you joined "${item.title}". ${error.message} ` +
@@ -295,8 +295,10 @@ function QuestBoard({
       if (error.resultUnknown) {
         await checkWhetherJoined(item, error);
       } else if (error.status === 409 && error.code === "already_joined") {
-        markJoined(item.id, { itemId: item.id, status: "joined" });
-        setActionMessage(`You've already joined "${item.title}".`);
+        // Reload so proof uses the real participation id, never a placeholder.
+        await checkWhetherJoined(item, error, {
+          successMessage: `You've already joined "${item.title}".`,
+        });
       } else if (isItemNotFound(error)) {
         itemGone(item);
       } else if (error.status === 403) {
@@ -485,6 +487,7 @@ function QuestBoard({
               userName: author?.name,
             }}
             item={shown}
+            participationId={participation?.id}
             participationStatus={proofParticipationStatus}
             onSessionExpired={onSessionExpired}
             onProofState={(submission) => {

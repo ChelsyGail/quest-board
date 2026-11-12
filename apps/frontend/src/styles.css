@@ -2400,6 +2400,24 @@ textarea {
   background: #e8efe4;
 }
 
+.proof-preview-fallback {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  background: #e8efe4;
+  border-radius: 6px;
+  min-height: 4rem;
+  align-content: center;
+}
+
+.proof-attached-meta {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
 .proof-preview-list li,
 .proof-video-preview {
   display: grid;
