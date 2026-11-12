@@ -45,7 +45,13 @@ Rules:
 - Caller must have participation `joined` (or resubmit after `rejected`).
 - `409 already_submitted` if a `pending` or `approved` submission exists.
 - `422` for missing required media/text or oversize/type violations.
-- On success: participation status becomes `pending`; response is the submission.
+- On success: create/update the submission as `pending`. Keep the participation/history
+  row — **do not** call Leave or delete group membership to “end” active UI participation.
+- Authoritative proof status drives discussion-space access (`:active` closed,
+  `:submitted` opened) and student-facing “Pending review” (not “Completed”).
+- **Group quests:** treat proof as **per participant** unless/until product defines shared
+  group completion. One member’s submission must not flip other members’ proof or
+  discussion access. Document any shared-completion decision before changing this.
 
 ### `GET /moderation/submissions?status=pending`
 
@@ -72,5 +78,8 @@ participation `rejected`. Same conflict/self-review rules as approve.
 
 - Role `moderator` for moderation routes (UI gating is not security).
 - Membership/participation checks on submit and resubmit.
+- Private proof-media URLs only for the submitter and authorized moderators.
 - Do not trust client-calculated points.
 - Rate-limit uploads; scan/store media outside the DB as needed.
+- After approve: return awarded points on the submission/achievements payload.
+- After reject: require feedback; allow resubmit; keep `:submitted` discussion access.

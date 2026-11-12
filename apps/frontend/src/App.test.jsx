@@ -421,8 +421,9 @@ describe("Quest navigation (QB-58, QB-60, QB-90)", () => {
     await user.click(await screen.findByRole("button", { name: "View quest: Forest hike" }));
 
     expect(await screen.findByRole("heading", { name: "Forest hike" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Discussion" })).toBeInTheDocument();
-    expect(screen.getByText(/Quest discussions aren't available yet/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Active participants" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /After submission/ })).toBeInTheDocument();
+    expect(screen.getAllByText(/Quest discussions aren't available yet/).length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "← My quests" }));
     expect(await screen.findByRole("heading", { name: "My quests" })).toBeInTheDocument();
 

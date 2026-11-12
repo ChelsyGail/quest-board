@@ -1,7 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { demoListThreads } from "./discussionsDemo.js";
+import { demoCreateThread, demoListThreads } from "./discussionsDemo.js";
 import QuestDiscussion from "./QuestDiscussion.jsx";
 
 vi.mock("./discussionsDemo.js", async (importOriginal) => {
@@ -13,12 +13,19 @@ const QUEST = { id: "11", kind: "quest", title: "Campus cleanup" };
 const AUTHOR = { id: "7", name: "Sam Student" };
 const member = { id: "p1", itemId: "11", status: "joined" };
 
-function renderDiscussion(participation = member, participationStatus = "loaded") {
+function renderDiscussion({
+  participation = member,
+  participationStatus = "loaded",
+  proofSubmission = null,
+  space = "active",
+} = {}) {
   return render(
     <QuestDiscussion
       quest={QUEST}
+      space={space}
       participation={participation}
       participationStatus={participationStatus}
+      proofSubmission={proofSubmission}
       author={AUTHOR}
       onSessionExpired={vi.fn()}
     />
@@ -38,19 +45,59 @@ afterEach(() => {
 describe("Quest discussion access", () => {
   it.each([
     [null, "loaded", /Only students who joined this quest/],
-    [{ ...member, status: "pending" }, "loaded", /waiting for the organizer's approval/],
-    [{ ...member, status: "rejected" }, "loaded", /didn't approve your participation/],
     [null, "error", /couldn't confirm that you've joined/],
-  ])("explains why it's closed (%o, %s)", (participation, status, message) => {
-    renderDiscussion(participation, status);
+  ])("explains why active space is closed (%o, %s)", (participation, status, message) => {
+    renderDiscussion({ participation, participationStatus: status, space: "active" });
     expect(screen.getByRole("status")).toHaveTextContent(message);
     expect(screen.queryByRole("button", { name: "New discussion" })).not.toBeInTheDocument();
     expect(demoListThreads).not.toHaveBeenCalled();
   });
 
-  it("opens for approved members", async () => {
-    renderDiscussion({ ...member, status: "approved" });
-    expect(await screen.findByRole("button", { name: /Anyone want to go together\?/ })).toBeInTheDocument();
+  it("closes active space after confirmed proof and opens submitted space", async () => {
+    const proof = { id: "s1", status: "pending" };
+    renderDiscussion({
+      participation: { ...member, status: "pending" },
+      proofSubmission: proof,
+      space: "active",
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(/active discussion is closed/);
+    expect(demoListThreads).not.toHaveBeenCalled();
+
+    cleanup();
+    renderDiscussion({
+      participation: { ...member, status: "pending" },
+      proofSubmission: proof,
+      space: "submitted",
+    });
+    expect(
+      await screen.findByText(/No discussions yet in the after-submission space/i)
+    ).toBeInTheDocument();
+    expect(demoListThreads).toHaveBeenCalledWith("quest:11:submitted");
+  });
+
+  it("keeps submitted space open after rejection without reopening active", async () => {
+    const proof = { id: "s1", status: "rejected", feedback: "Add a clearer photo." };
+    renderDiscussion({
+      participation: { ...member, status: "rejected" },
+      proofSubmission: proof,
+      space: "active",
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(/active discussion is closed/);
+
+    cleanup();
+    renderDiscussion({
+      participation: { ...member, status: "rejected" },
+      proofSubmission: proof,
+      space: "submitted",
+    });
+    expect(await screen.findByRole("button", { name: "New discussion" })).toBeInTheDocument();
+  });
+
+  it("opens active space for joined members without proof", async () => {
+    renderDiscussion({ space: "active" });
+    expect(
+      await screen.findByRole("button", { name: /Anyone want to go together\?/ })
+    ).toBeInTheDocument();
   });
 });
 
@@ -59,14 +106,16 @@ describe("Quest discussion prototype", () => {
     renderDiscussion();
     expect(screen.getByRole("note")).toHaveTextContent("Prototype with sample discussions");
     expect(screen.getByRole("note")).toHaveTextContent("Nobody else can see them");
-    const list = await screen.findByRole("list", { name: "Discussions about Campus cleanup" });
+    const list = await screen.findByRole("list", {
+      name: "Active discussions about Campus cleanup",
+    });
     expect(within(list).getAllByText(/Sample/).length).toBeGreaterThan(0);
   });
 
   it("posts a discussion as plain text and shows it as a thread", async () => {
     const user = userEvent.setup();
     renderDiscussion();
-    await screen.findByRole("list", { name: "Discussions about Campus cleanup" });
+    await screen.findByRole("list", { name: "Active discussions about Campus cleanup" });
 
     await user.click(screen.getByRole("button", { name: "New discussion" }));
     await user.click(screen.getByRole("button", { name: "Post discussion" }));
@@ -88,7 +137,7 @@ describe("Quest discussion prototype", () => {
   it("keeps drafts while moving between the list and threads", async () => {
     const user = userEvent.setup();
     renderDiscussion();
-    await screen.findByRole("list", { name: "Discussions about Campus cleanup" });
+    await screen.findByRole("list", { name: "Active discussions about Campus cleanup" });
 
     await user.click(screen.getByRole("button", { name: "New discussion" }));
     await user.type(screen.getByLabelText("Title"), "Half-written idea");
@@ -112,7 +161,9 @@ describe("Quest discussion prototype", () => {
   it("searches and filters by category", async () => {
     const user = userEvent.setup();
     renderDiscussion();
-    const list = await screen.findByRole("list", { name: "Discussions about Campus cleanup" });
+    const list = await screen.findByRole("list", {
+      name: "Active discussions about Campus cleanup",
+    });
     expect(within(list).getAllByRole("button")).toHaveLength(3);
 
     await user.click(screen.getByRole("button", { name: "Tips" }));
@@ -122,6 +173,20 @@ describe("Quest discussion prototype", () => {
     expect(within(list).getAllByRole("button")).toHaveLength(1);
     await user.type(screen.getByLabelText("Search discussions"), "zzz");
     expect(screen.getByText("No discussions match your search.")).toBeInTheDocument();
+  });
+
+  it("never mixes active and submitted threads", async () => {
+    await demoCreateThread(
+      "quest:11:submitted",
+      { title: "Spoiler tip", category: "tips", body: "The answer is under the bridge." },
+      AUTHOR
+    );
+    renderDiscussion({ space: "active" });
+    const list = await screen.findByRole("list", {
+      name: "Active discussions about Campus cleanup",
+    });
+    expect(within(list).queryByText(/Spoiler tip/)).not.toBeInTheDocument();
+    expect(demoListThreads).toHaveBeenCalledWith("quest:11:active");
   });
 
   it("says it's unavailable in live mode and never loads sample data", () => {

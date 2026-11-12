@@ -32,10 +32,25 @@ export function useDiscussionBoard(client, scope, categories, { onSessionExpired
     setMessage(error.message || "Something went wrong.");
   }
 
+  // Clear selected thread, drafts and filters when the discussion space changes so
+  // active-space content cannot linger after submission unlocks the other space.
+  useEffect(() => {
+    setView({ mode: "list" });
+    setFilters({ query: "", category: "" });
+    setNewDraft(EMPTY_DRAFT);
+    setNewErrors({});
+    setReplyDrafts({});
+    setReplyError("");
+    setSubmitError("");
+    setDetail({ status: "idle", thread: null, replies: [] });
+    setThreads([]);
+  }, [scope]);
+
   useEffect(() => {
     if (!client) return undefined;
     let ignore = false;
     setListStatus("loading");
+    setListError("");
     client
       .listThreads(scope)
       .then((list) => {
@@ -51,7 +66,7 @@ export function useDiscussionBoard(client, scope, categories, { onSessionExpired
     return () => {
       ignore = true;
     };
-    // The client is rebuilt each render; the scope and attempt decide when to reload.
+    // Client identity is cached by author; scope + attempt decide when to reload.
   }, [scope, listAttempt, Boolean(client)]);
 
   const openId = view.mode === "thread" ? view.id : null;

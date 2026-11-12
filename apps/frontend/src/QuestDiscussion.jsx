@@ -12,43 +12,80 @@ import {
   QUEST_CATEGORIES,
   filterThreads,
   getDiscussionClient,
-  questDiscussionAccess,
-  questScope,
+  questActiveDiscussionAccess,
+  questActiveScope,
+  questSubmittedDiscussionAccess,
+  questSubmittedScope,
 } from "./discussions.js";
 import { useDiscussionBoard } from "./useDiscussionBoard.js";
 
-// The discussion inside a quest's details, for students who joined it. The page only offers
-// it to members; the discussion API will have to check membership itself on every request.
-function QuestDiscussion({ quest, participation, participationStatus, author, onSessionExpired }) {
-  const access = questDiscussionAccess(participation, participationStatus);
+/**
+ * Quest discussion panel for one space: "active" (pre-submission) or "submitted"
+ * (after confirmed proof — spoilers allowed, including while Pending).
+ */
+function QuestDiscussion({
+  quest,
+  participation,
+  participationStatus,
+  proofSubmission = null,
+  space = "active",
+  author,
+  onSessionExpired,
+}) {
+  const access =
+    space === "submitted"
+      ? questSubmittedDiscussionAccess(participation, participationStatus, proofSubmission)
+      : questActiveDiscussionAccess(participation, participationStatus, proofSubmission);
+
+  const titleId = space === "submitted" ? "quest-discussion-submitted-title" : "quest-discussion-active-title";
+  const heading =
+    space === "submitted" ? "After submission — spoilers allowed" : "Active participants";
+  const hint =
+    space === "submitted"
+      ? "For people who have submitted proof. Spoilers about completing the quest are allowed here."
+      : "Find teammates, ask questions and share tips before you submit proof.";
+
   return (
-    <section className="quest-discussion panel" aria-labelledby="quest-discussion-title">
-      <h3 className="section-title" id="quest-discussion-title">
-        Discussion
+    <section
+      className={`quest-discussion panel quest-discussion-${space}`}
+      aria-labelledby={titleId}
+    >
+      <h3 className="section-title" id={titleId}>
+        {heading}
       </h3>
-      <p className="hint section-hint">
-        Find teammates, ask questions and share tips with others on this quest.
-      </p>
+      <p className="hint section-hint">{hint}</p>
       {!access.allowed ? (
         <p className="discussion-locked" role="status">
           {access.message}
         </p>
       ) : (
-        <MemberDiscussion quest={quest} author={author} onSessionExpired={onSessionExpired} />
+        <MemberDiscussion
+          quest={quest}
+          space={space}
+          author={author}
+          onSessionExpired={onSessionExpired}
+        />
       )}
     </section>
   );
 }
 
-function MemberDiscussion({ quest, author, onSessionExpired }) {
+function MemberDiscussion({ quest, space, author, onSessionExpired }) {
   const client = getDiscussionClient(author);
-  const board = useDiscussionBoard(client, questScope(quest.id), QUEST_CATEGORIES, {
+  const scope = space === "submitted" ? questSubmittedScope(quest.id) : questActiveScope(quest.id);
+  const board = useDiscussionBoard(client, scope, QUEST_CATEGORIES, {
     onSessionExpired,
   });
   const visible = useMemo(
     () => filterThreads(board.threads, board.filters),
     [board.threads, board.filters]
   );
+  const searchId =
+    space === "submitted" ? "quest-discussion-submitted-search" : "quest-discussion-active-search";
+  const listLabel =
+    space === "submitted"
+      ? `After-submission discussions for ${quest.title}`
+      : `Active discussions about ${quest.title}`;
 
   if (!client) return <DiscussionsUnavailable what="Quest discussions" />;
 
@@ -65,7 +102,7 @@ function MemberDiscussion({ quest, author, onSessionExpired }) {
             filters={board.filters}
             onChange={board.setFilters}
             categories={QUEST_CATEGORIES}
-            searchId="quest-discussion-search"
+            searchId={searchId}
           />
           <button type="button" className="button button-small" onClick={() => board.startNew()}>
             New discussion
@@ -74,13 +111,17 @@ function MemberDiscussion({ quest, author, onSessionExpired }) {
         <ThreadListState
           board={board}
           visibleCount={visible.length}
-          emptyMessage="No discussions yet. Start one to find teammates or ask a question."
+          emptyMessage={
+            space === "submitted"
+              ? "No discussions yet in the after-submission space."
+              : "No discussions yet. Start one to find teammates or ask a question."
+          }
         >
           <DiscussionList
             threads={visible}
             categories={QUEST_CATEGORIES}
             onOpen={board.openThread}
-            label={`Discussions about ${quest.title}`}
+            label={listLabel}
           />
         </ThreadListState>
       </>

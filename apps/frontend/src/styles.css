@@ -1543,16 +1543,48 @@ textarea {
   font-weight: 700;
 }
 
-/* Discussions */
-.quest-detail-layout {
+/* Discussions + quest workspace (desktop-first: ~25% / 50% / 25%) */
+.quest-detail-layout,
+.quest-detail-layout-simple {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.85fr);
   gap: 18px;
   align-items: start;
 }
 
-.quest-detail-layout .quest-detail {
+.quest-workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(360px, 2fr) minmax(240px, 1fr);
+  gap: 18px;
+  align-items: start;
+  width: 100%;
+}
+
+.quest-workspace-main,
+.quest-detail-layout .quest-detail,
+.quest-detail-layout-simple .quest-detail {
   max-width: none;
+}
+
+.quest-workspace-discussions,
+.quest-workspace-actions {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+  min-width: 0;
+}
+
+.quest-workspace-discussions .quest-discussion {
+  max-height: min(70vh, 720px);
+  overflow: auto;
+}
+
+.proof-confirm {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border, #ddd6c8);
+  border-radius: var(--radius-sm, 8px);
+  background: #fffdf7;
 }
 
 .quest-discussion {
@@ -2050,9 +2082,27 @@ textarea {
 
 @media (max-width: 1100px) {
   .quest-detail-layout,
+  .quest-detail-layout-simple,
+  .quest-workspace,
   .calendar-layout,
   .grove-layout {
     grid-template-columns: 1fr;
+  }
+
+  .quest-workspace-main {
+    order: 1;
+  }
+
+  .quest-workspace-actions {
+    order: 2;
+  }
+
+  .quest-workspace-discussions {
+    order: 3;
+  }
+
+  .quest-workspace-discussions .quest-discussion {
+    max-height: none;
   }
 
   .calendar-day-panel,

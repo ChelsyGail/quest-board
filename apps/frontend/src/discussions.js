@@ -1,5 +1,5 @@
 // Discussions are a frontend prototype: there is no discussion API yet (see
-// docs/discussion-api-proposal.md). The sample adapter only runs on the dev server with
+// docs/discussion-api-proposal.md). The sample adapter only runs on the DEV server with
 // VITE_DISCUSSIONS_DEMO=true. Otherwise there is no discussion client at all and the pages
 // say so; they never fall back to sample data.
 import {
@@ -26,8 +26,17 @@ export const GROVE_TOPICS = [
 
 export const GROVE_SCOPE = "grove";
 
+/** @deprecated Prefer questActiveScope / questSubmittedScope. Legacy `quest:{id}` maps to submitted. */
 export function questScope(itemId) {
   return `quest:${itemId}`;
+}
+
+export function questActiveScope(itemId) {
+  return `quest:${itemId}:active`;
+}
+
+export function questSubmittedScope(itemId) {
+  return `quest:${itemId}:submitted`;
 }
 
 export const LIMITS = {
@@ -41,17 +50,33 @@ export function discussionsPrototypeEnabled() {
   return import.meta.env.DEV === true && import.meta.env.VITE_DISCUSSIONS_DEMO === "true";
 }
 
+const discussionClientCache = new Map();
+
+export function clearDiscussionClientCache() {
+  discussionClientCache.clear();
+}
+
 // The sample adapter in prototype mode, otherwise null: nothing to read or post to yet.
 // `author` is { id, name } of the signed-in user, used for posts made in this tab.
 export function getDiscussionClient(author) {
   if (!discussionsPrototypeEnabled()) return null;
-  return {
+  if (!author?.id) return null;
+  const key = String(author.id);
+  const cached = discussionClientCache.get(key);
+  if (cached) return cached;
+  const client = {
     isPrototype: true,
     listThreads: (scope) => demoListThreads(scope),
     getThread: (threadId) => demoGetThread(threadId),
     createThread: (scope, fields) => demoCreateThread(scope, fields, author),
     createReply: (threadId, fields) => demoCreateReply(threadId, fields, author),
   };
+  discussionClientCache.set(key, client);
+  if (discussionClientCache.size > 24) {
+    const oldest = discussionClientCache.keys().next().value;
+    discussionClientCache.delete(oldest);
+  }
+  return client;
 }
 
 export function categoryLabel(categories, id) {
@@ -104,33 +129,66 @@ export function excerpt(text, length = 110) {
   return flat.length > length ? `${flat.slice(0, length - 1).trimEnd()}…` : flat;
 }
 
-// Whether the student may read and post in a quest's discussion, from their participation.
-// The real check has to happen on the server: this only decides what the page offers.
-// `participationStatus` is the load status of GET /me/participations.
-export function questDiscussionAccess(participation, participationStatus) {
-  if (participation && ["joined", "approved"].includes(participation.status)) {
-    return { allowed: true };
-  }
-  if (participation?.status === "pending") {
+const PROOF_STATUSES = new Set(["pending", "approved", "rejected"]);
+
+/**
+ * Resolve membership vs confirmed proof for discussion gating.
+ * `proofSubmission` is authoritative when loaded from the proof client.
+ * Otherwise participation.status of pending/approved/rejected is treated as proof phase
+ * (demo + current My Quests model). Join-gate-only pending without a proof record is rare.
+ */
+export function resolveQuestDiscussionPhase(participation, participationStatus, proofSubmission) {
+  if (proofSubmission && PROOF_STATUSES.has(proofSubmission.status)) {
     return {
-      allowed: false,
-      reason: "pending",
-      message:
-        "Your place on this quest is waiting for the organizer's approval. The discussion " +
-        "opens once you're approved.",
+      member: true,
+      proofStatus: proofSubmission.status,
+      phase: "submitted",
     };
   }
-  if (participation?.status === "rejected") {
+  if (participation && PROOF_STATUSES.has(participation.status)) {
     return {
-      allowed: false,
-      reason: "rejected",
-      message: "The organizer didn't approve your participation, so the discussion is closed to you.",
+      member: true,
+      proofStatus: participation.status,
+      phase: "submitted",
     };
+  }
+  if (participation?.status === "joined") {
+    return { member: true, proofStatus: null, phase: "active" };
   }
   if (participationStatus === "loading") {
-    return { allowed: false, reason: "checking", message: "Checking whether you've joined…" };
+    return { member: false, proofStatus: null, phase: "checking" };
   }
   if (participationStatus === "error") {
+    return { member: false, proofStatus: null, phase: "unknown" };
+  }
+  return { member: false, proofStatus: null, phase: "not-joined" };
+}
+
+/** Active-participant space: joined, no confirmed proof submission. */
+export function questActiveDiscussionAccess(
+  participation,
+  participationStatus,
+  proofSubmission = null
+) {
+  const resolved = resolveQuestDiscussionPhase(
+    participation,
+    participationStatus,
+    proofSubmission
+  );
+  if (resolved.phase === "active") return { allowed: true };
+  if (resolved.phase === "submitted") {
+    return {
+      allowed: false,
+      reason: "submitted",
+      message:
+        "You've submitted proof for this quest, so the active discussion is closed. " +
+        "Use the after-submission space — spoilers may appear there.",
+    };
+  }
+  if (resolved.phase === "checking") {
+    return { allowed: false, reason: "checking", message: "Checking whether you've joined…" };
+  }
+  if (resolved.phase === "unknown") {
     return {
       allowed: false,
       reason: "unknown",
@@ -142,8 +200,52 @@ export function questDiscussionAccess(participation, participationStatus) {
   return {
     allowed: false,
     reason: "not-joined",
-    message: "Only students who joined this quest can read and post in its discussion. Join the quest to take part.",
+    message:
+      "Only students who joined this quest can read and post here. Join the quest to take part.",
   };
+}
+
+/** After-submission space (spoilers allowed), including while Pending review. */
+export function questSubmittedDiscussionAccess(
+  participation,
+  participationStatus,
+  proofSubmission = null
+) {
+  const resolved = resolveQuestDiscussionPhase(
+    participation,
+    participationStatus,
+    proofSubmission
+  );
+  if (resolved.phase === "submitted") return { allowed: true };
+  if (resolved.phase === "active") {
+    return {
+      allowed: false,
+      reason: "not-submitted",
+      message:
+        "This space unlocks after you submit proof. It may contain spoilers about completing the quest.",
+    };
+  }
+  if (resolved.phase === "checking") {
+    return { allowed: false, reason: "checking", message: "Checking whether you've joined…" };
+  }
+  if (resolved.phase === "unknown") {
+    return {
+      allowed: false,
+      reason: "unknown",
+      message:
+        "We couldn't confirm your participation, so this discussion is hidden for now. Reload to try again.",
+    };
+  }
+  return {
+    allowed: false,
+    reason: "not-joined",
+    message: "Join this quest and submit proof to open the after-submission discussion.",
+  };
+}
+
+/** @deprecated Use questActiveDiscussionAccess / questSubmittedDiscussionAccess. */
+export function questDiscussionAccess(participation, participationStatus) {
+  return questActiveDiscussionAccess(participation, participationStatus, null);
 }
 
 export function formatPostTime(iso) {

@@ -1,22 +1,37 @@
 # Discussion API — proposal
 
-**Status: proposal, not implemented (re-verified 2026-11-12).** The backend still has no
-discussion tables or routes on `main` or open teammate branches. The quest discussion
-section and Quest Grove remain a frontend prototype: with `VITE_DISCUSSIONS_DEMO=true` on
-the DEV server they use sample data kept in one browser tab
+**Status: proposal, not implemented (re-verified 2026-11-12; scopes updated same day).**
+The backend still has no discussion tables or routes on `main` or open teammate branches.
+The quest discussion section and Quest Grove remain a frontend prototype: with
+`VITE_DISCUSSIONS_DEMO=true` on the DEV server they use sample data kept in one browser tab
 (`apps/frontend/src/discussionsDemo.js`). Without it, and in every production build, they
-show that discussions aren't available. Sprint 5 prioritized proof/moderation/rewards; the
-Grove UI was preserved and not rebuilt. This document describes what the backend would need
-so the prototype can be switched to a real service.
+show that discussions aren't available. Quest Grove’s tree UI is preserved. This document
+describes what the backend would need so the prototype can be switched to a real service.
 
 ## Scopes
 
-Every thread belongs to one scope:
+Every thread belongs to exactly one scope. Quest discussions are split so spoilers cannot
+leak to students who have not yet submitted proof:
 
 | Scope | Who can read and post |
 | --- | --- |
-| `quest:{item_id}` | Students whose participation in that quest is `joined` or `approved` |
+| `quest:{item_id}:active` | Students who joined the quest and have **no** confirmed proof submission yet |
+| `quest:{item_id}:submitted` | Students with a confirmed submission (`pending`, `approved`, or `rejected`) |
 | `grove` | Any signed-in user |
+
+**UI labels:** active = “Active participants”; submitted = “After submission — spoilers allowed”.
+
+**Access rules (server-enforced):**
+
+- Confirmed submission (including Pending review) **revokes** read and post on `:active`.
+- Rejection keeps the student on `:submitted`; do **not** reopen `:active`.
+- Do not switch spaces on click/upload start — only after the submission is confirmed.
+- Moderators may follow existing product rules for oversight; membership still required for students.
+- Never copy or merge threads between `:active` and `:submitted`.
+
+**Legacy migration:** historical `quest:{item_id}` rows (no space suffix) must **not** be
+exposed on `:active`. Treat them as `:submitted` (or quarantine) so potential spoilers stay
+out of the active space.
 
 Topics (`category`):
 

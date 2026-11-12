@@ -69,6 +69,8 @@ function QuestBoard({
   const [isJoining, setIsJoining] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+  // Authoritative proof submission for the open quest (from ProofSubmit), not guessed from join status.
+  const [proofByItem, setProofByItem] = useState(() => new Map());
 
   const query = useMemo(
     () => catalogueQuery({ ...filters, query: searchQuery }, page),
@@ -331,146 +333,213 @@ function QuestBoard({
     const shown = detail.item || selected;
     const isQuest = shown.kind !== "event";
     const participation = participations.get(shown.id);
+    const proofSubmission = proofByItem.get(shown.id) || null;
+    const displayStatus = proofSubmission?.status || participation?.status;
     const joined = Boolean(participation);
-    const showStatus = participation && participation.status !== "joined";
-    const withDiscussion = isQuest && canJoin;
-    content = (
-      <div className={withDiscussion ? "quest-detail-layout" : undefined}>
-        <article className="quest-detail panel" aria-labelledby="quest-detail-title">
-          <button type="button" className="link-button small" onClick={closeItem}>
-            {backLabel}
-          </button>
-          <div className={`${bannerClassName(shown.category)} quest-detail-banner`} aria-hidden="true">
-            <span className="quest-banner-stamp">{itemKindLabel(shown.kind)}</span>
-          </div>
-          <div className="request-heading quest-detail-heading">
-            <h3 className="section-title" id="quest-detail-title">
-              {shown.title}
-            </h3>
-            {showStatus ? (
-              <span className={`badge status-${participation.status}`}>
-                {participationStatusLabel(participation.status)}
-              </span>
-            ) : (
-              joined && <span className="badge badge-joined">{isQuest ? "Joined" : "Going"}</span>
-            )}
-          </div>
-          {detail.status === "gone" && (
-            <p className="small muted" role="status">
-              This is no longer on the board, so these are the last details we had.
-            </p>
+    const showStatus = displayStatus && displayStatus !== "joined";
+    const withWorkspace = isQuest && canJoin;
+    const proofParticipationStatus =
+      proofSubmission?.status === "pending" || proofSubmission?.status === "approved"
+        ? proofSubmission.status
+        : participation?.status === "rejected" || proofSubmission?.status === "rejected"
+          ? "rejected"
+          : participation?.status || "joined";
+
+    const mainPanel = (
+      <article
+        className={`quest-detail panel${withWorkspace ? " quest-workspace-main" : ""}`}
+        aria-labelledby="quest-detail-title"
+      >
+        <button type="button" className="link-button small" onClick={closeItem}>
+          {backLabel}
+        </button>
+        <div className={`${bannerClassName(shown.category)} quest-detail-banner`} aria-hidden="true">
+          <span className="quest-banner-stamp">{itemKindLabel(shown.kind)}</span>
+        </div>
+        <div className="request-heading quest-detail-heading">
+          <h3 className="section-title" id="quest-detail-title">
+            {shown.title}
+          </h3>
+          {showStatus ? (
+            <span className={`badge status-${displayStatus}`}>
+              {displayStatus === "pending" && isQuest
+                ? "Pending review"
+                : participationStatusLabel(displayStatus)}
+            </span>
+          ) : (
+            joined && <span className="badge badge-joined">{isQuest ? "Joined" : "Going"}</span>
           )}
-          {detail.status === "loading" && (
-            <p className="small muted" role="status">
-              Checking for the latest details…
-            </p>
-          )}
-          {detail.status === "error" && (
-            <p className="small muted" role="status">
-              These details may be out of date. {detail.error}
-            </p>
-          )}
-          <div className="quest-card-meta">
-            <span className="badge badge-category">{shown.category || "Campus"}</span>
-            {isQuest && <span className="badge badge-points">{shown.pointValue ?? "—"} pts</span>}
-          </div>
-          <dl className="quest-facts small">
-            <dt>When</dt>
-            <dd>{formatItemWindow(shown.startsAt, shown.endsAt, shown.timeZone)}</dd>
-            <dt>Time zone</dt>
-            <dd>{shown.timeZone.replace(/_/g, " ")}</dd>
-            <dt>Where</dt>
-            <dd>{shown.location}</dd>
-            <dt>Category</dt>
-            <dd>{shown.category}</dd>
-            {isQuest && (
-              <>
-                <dt>Points</dt>
-                <dd>{shown.pointValue}</dd>
-              </>
-            )}
-          </dl>
-          <p className="quest-text">{shown.description}</p>
+        </div>
+        {detail.status === "gone" && (
+          <p className="small muted" role="status">
+            This is no longer on the board, so these are the last details we had.
+          </p>
+        )}
+        {detail.status === "loading" && (
+          <p className="small muted" role="status">
+            Checking for the latest details…
+          </p>
+        )}
+        {detail.status === "error" && (
+          <p className="small muted" role="status">
+            These details may be out of date. {detail.error}
+          </p>
+        )}
+        <div className="quest-card-meta">
+          <span className="badge badge-category">{shown.category || "Campus"}</span>
+          {isQuest && <span className="badge badge-points">{shown.pointValue ?? "—"} pts</span>}
+        </div>
+        <dl className="quest-facts small">
+          <dt>When</dt>
+          <dd>{formatItemWindow(shown.startsAt, shown.endsAt, shown.timeZone)}</dd>
+          <dt>Time zone</dt>
+          <dd>{shown.timeZone.replace(/_/g, " ")}</dd>
+          <dt>Where</dt>
+          <dd>{shown.location}</dd>
+          <dt>Category</dt>
+          <dd>{shown.category}</dd>
           {isQuest && (
             <>
-              <h4 className="quest-subtitle">How to show you did it</h4>
-              <p className="quest-text">{shown.proofInstructions}</p>
+              <dt>Points</dt>
+              <dd>{shown.pointValue}</dd>
             </>
           )}
+        </dl>
+        <p className="quest-text">{shown.description}</p>
+        {isQuest && (
+          <>
+            <h4 className="quest-subtitle">How to show you did it</h4>
+            <p className="quest-text">{shown.proofInstructions}</p>
+          </>
+        )}
+        {joined && (
+          <p className="message quest-joined">
+            {displayStatus === "pending" && isQuest
+              ? "Your proof is pending review. Active discussion is closed; after-submission discussion is open."
+              : displayStatus === "rejected" && isQuest
+                ? "Your proof was rejected. You can read the feedback and submit again. After-submission discussion stays open."
+                : displayStatus === "approved" && isQuest
+                  ? "Your proof was approved."
+                  : isQuest
+                    ? "You've joined this quest. Submit proof when you're ready."
+                    : "You're going to this event."}
+          </p>
+        )}
+        <p className="form-error form-error-left" role="alert">
+          {actionError}
+        </p>
+        <p className="message message-left" aria-live="polite">
+          {actionMessage}
+        </p>
+      </article>
+    );
 
-          {joined ? (
-            <p className="message quest-joined">
-              {participation.status === "pending"
-                ? isQuest
-                  ? "Your proof is pending review."
-                  : "You're going to this event."
-                : participation.status === "rejected"
-                  ? isQuest
-                    ? "Your proof was rejected. You can read the feedback and submit again."
-                    : "Your RSVP was rejected."
-                  : participation.status === "approved"
-                    ? "Your proof was approved."
-                    : isQuest
-                      ? "You've joined this quest."
-                      : "You're going to this event."}
+    const actionsPanel = (
+      <aside className="quest-workspace-actions" aria-label="Participation and proof">
+        {!joined && detail.status !== "gone" && canJoin && (
+          <section className="panel">
+            <h3 className="section-title">Join</h3>
+            <p className="hint">
+              {isQuest
+                ? "Joining unlocks proof submission and the active participants discussion."
+                : "RSVP to mark that you're going."}
             </p>
-          ) : detail.status === "gone" ? null : canJoin ? (
             <button
               type="button"
-              className="button button-inline"
+              className="button"
               onClick={() => handleJoin(shown)}
               disabled={isJoining}
             >
               {isJoining ? (isQuest ? "Joining…" : "Sending RSVP…") : isQuest ? "Join quest" : "RSVP"}
             </button>
-          ) : (
+          </section>
+        )}
+        {!joined && !canJoin && (
+          <section className="panel">
             <p className="hint">Only students can join quests or RSVP to events.</p>
-          )}
-          {!joined && participationStatus === "error" && (
-            <p className="hint">We couldn't check whether you've already joined this one.</p>
-          )}
-          <p className="form-error form-error-left" role="alert">
-            {actionError}
-          </p>
-          <p className="message message-left" aria-live="polite">
-            {actionMessage}
-          </p>
-        </article>
-        <div className="quest-detail-side">
-          {isQuest && canJoin && joined && (
-            <ProofSubmit
-              session={{
-                token: session.token,
-                userId: session.userId,
-                userName: author?.name,
-              }}
-              item={shown}
-              participationStatus={participation?.status || "joined"}
-              onSessionExpired={onSessionExpired}
-              onSubmitted={(submission) => {
-                setParticipations((current) => {
-                  const next = new Map(current);
-                  const previous = next.get(shown.id) || {
-                    id: `local-${shown.id}`,
-                    itemId: shown.id,
-                    status: "joined",
-                  };
-                  next.set(shown.id, { ...previous, status: submission.status });
-                  return next;
+          </section>
+        )}
+        {!joined && participationStatus === "error" && (
+          <p className="hint">We couldn't check whether you've already joined this one.</p>
+        )}
+        {isQuest && canJoin && joined && (
+          <ProofSubmit
+            session={{
+              token: session.token,
+              userId: session.userId,
+              userName: author?.name,
+            }}
+            item={shown}
+            participationStatus={proofParticipationStatus}
+            onSessionExpired={onSessionExpired}
+            onProofState={(submission) => {
+              setProofByItem((current) => {
+                const next = new Map(current);
+                if (submission) next.set(shown.id, submission);
+                else next.delete(shown.id);
+                return next;
+              });
+            }}
+            onSubmitted={(submission) => {
+              setProofByItem((current) => {
+                const next = new Map(current);
+                next.set(shown.id, submission);
+                return next;
+              });
+              // Keep membership; sync proof-phase status for My Quests labels without calling Leave.
+              setParticipations((current) => {
+                const next = new Map(current);
+                const previous = next.get(shown.id) || {
+                  id: `local-${shown.id}`,
+                  itemId: shown.id,
+                  status: "joined",
+                };
+                next.set(shown.id, {
+                  ...previous,
+                  status: submission.status,
+                  proofStatus: submission.status,
                 });
-              }}
-            />
-          )}
-          {withDiscussion && (
-            <QuestDiscussion
-              quest={shown}
-              participation={participation}
-              participationStatus={participationStatus}
-              author={author}
-              onSessionExpired={onSessionExpired}
-            />
-          )}
-        </div>
+                return next;
+              });
+            }}
+          />
+        )}
+      </aside>
+    );
+
+    const discussionsPanel = withWorkspace ? (
+      <aside className="quest-workspace-discussions" aria-label="Quest discussions">
+        <QuestDiscussion
+          quest={shown}
+          space="active"
+          participation={participation}
+          participationStatus={participationStatus}
+          proofSubmission={proofSubmission}
+          author={author}
+          onSessionExpired={onSessionExpired}
+        />
+        <QuestDiscussion
+          quest={shown}
+          space="submitted"
+          participation={participation}
+          participationStatus={participationStatus}
+          proofSubmission={proofSubmission}
+          author={author}
+          onSessionExpired={onSessionExpired}
+        />
+      </aside>
+    ) : null;
+
+    content = withWorkspace ? (
+      <div className="quest-workspace">
+        {discussionsPanel}
+        {mainPanel}
+        {actionsPanel}
+      </div>
+    ) : (
+      <div className="quest-detail-layout quest-detail-layout-simple">
+        {mainPanel}
+        {actionsPanel}
       </div>
     );
   } else {

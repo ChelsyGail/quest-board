@@ -342,7 +342,7 @@ describe("Joining and RSVP (QB-90)", () => {
 
     expect(joinItem).toHaveBeenCalledWith("11", "tok");
     expect(await screen.findByText('You joined "Campus cleanup".')).toBeInTheDocument();
-    expect(screen.getByText("You've joined this quest.")).toBeInTheDocument();
+    expect(screen.getByText(/You\'ve joined this quest/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Join quest" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "← All quests and events" }));
@@ -355,11 +355,14 @@ describe("Joining and RSVP (QB-90)", () => {
     renderBoard();
     await open(user);
 
-    const discussion = screen.getByRole("region", { name: "Discussion" });
-    expect(discussion).toHaveTextContent("Only students who joined this quest");
+    const active = screen.getByRole("region", { name: "Active participants" });
+    expect(active).toHaveTextContent(/Only students who joined this quest/);
+    expect(screen.getByRole("region", { name: /After submission/ })).toHaveTextContent(
+      /submit proof to open the after-submission discussion/
+    );
     await user.click(joinButton());
     await screen.findByText('You joined "Campus cleanup".');
-    expect(discussion).toHaveTextContent("Quest discussions aren't available yet");
+    expect(active).toHaveTextContent("Quest discussions aren't available yet");
   });
 
   it("restores the joined status after a refresh from /me/participations", async () => {
@@ -369,7 +372,7 @@ describe("Joining and RSVP (QB-90)", () => {
 
     await open(user);
 
-    expect(screen.getByText("You've joined this quest.")).toBeInTheDocument();
+    expect(screen.getByText(/You\'ve joined this quest/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Join quest" })).not.toBeInTheDocument();
   });
 
@@ -387,7 +390,7 @@ describe("Joining and RSVP (QB-90)", () => {
 
     expect(joinItem).toHaveBeenCalledTimes(1);
     finish({ id: "p11", itemId: "11", status: "joined" });
-    expect(await screen.findByText("You've joined this quest.")).toBeInTheDocument();
+    expect(await screen.findByText(/You\'ve joined this quest/)).toBeInTheDocument();
   });
 
   it("treats only the already_joined conflict as joined", async () => {
@@ -399,7 +402,7 @@ describe("Joining and RSVP (QB-90)", () => {
     await user.click(joinButton());
 
     expect(await screen.findByText(`You've already joined "Campus cleanup".`)).toBeInTheDocument();
-    expect(screen.getByText("You've joined this quest.")).toBeInTheDocument();
+    expect(screen.getByText(/You\'ve joined this quest/)).toBeInTheDocument();
   });
 
   it("doesn't treat another conflict as joined", async () => {
@@ -505,7 +508,7 @@ describe("Joining and RSVP (QB-90)", () => {
       await user.click(joinButton());
 
       expect(await screen.findByText('You joined "Campus cleanup".')).toBeInTheDocument();
-      expect(screen.getByText("You've joined this quest.")).toBeInTheDocument();
+      expect(screen.getByText(/You\'ve joined this quest/)).toBeInTheDocument();
       expect(joinItem).toHaveBeenCalledTimes(1);
     });
 
@@ -537,7 +540,7 @@ describe("Joining and RSVP (QB-90)", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "Use Reload to check before trying again."
       );
-      expect(screen.queryByText("You've joined this quest.")).not.toBeInTheDocument();
+      expect(screen.queryByText(/You\'ve joined this quest/)).not.toBeInTheDocument();
       expect(joinItem).toHaveBeenCalledTimes(1);
     });
   });
@@ -550,7 +553,7 @@ describe("Joining and RSVP (QB-90)", () => {
     listMyParticipations.mockResolvedValue([joined(quest())]);
     await user.click(screen.getByRole("button", { name: "Reload" }));
 
-    expect(await screen.findByText("You've joined this quest.")).toBeInTheDocument();
+    expect(await screen.findByText(/You\'ve joined this quest/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Campus cleanup" })).toBeInTheDocument();
   });
 });

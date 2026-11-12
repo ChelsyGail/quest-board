@@ -2,10 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GROVE_TOPICS,
   QUEST_CATEGORIES,
+  clearDiscussionClientCache,
   discussionsPrototypeEnabled,
   filterThreads,
   getDiscussionClient,
-  questDiscussionAccess,
+  questActiveDiscussionAccess,
+  questActiveScope,
+  questSubmittedDiscussionAccess,
+  questSubmittedScope,
   validateReply,
   validateThread,
 } from "./discussions.js";
@@ -21,6 +25,7 @@ const AUTHOR = { id: "7", name: "Sam" };
 
 beforeEach(() => {
   sessionStorage.clear();
+  clearDiscussionClientCache();
 });
 
 afterEach(() => {
@@ -28,44 +33,64 @@ afterEach(() => {
 });
 
 describe("discussion prototype switch", () => {
-  it("is off unless the dev server runs with VITE_DISCUSSIONS_DEMO=true", () => {
+  it("is off unless the DEV server runs with VITE_DISCUSSIONS_DEMO=true", () => {
     expect(discussionsPrototypeEnabled()).toBe(false);
     expect(getDiscussionClient(AUTHOR)).toBeNull();
 
     vi.stubEnv("VITE_DISCUSSIONS_DEMO", "true");
     expect(discussionsPrototypeEnabled()).toBe(true);
     expect(getDiscussionClient(AUTHOR)).toMatchObject({ isPrototype: true });
+    expect(getDiscussionClient(AUTHOR)).toBe(getDiscussionClient(AUTHOR));
 
     // A production build has DEV=false: no sample discussions, whatever the flag says.
     vi.stubEnv("DEV", false);
+    clearDiscussionClientCache();
     expect(discussionsPrototypeEnabled()).toBe(false);
     expect(getDiscussionClient(AUTHOR)).toBeNull();
   });
 });
 
-describe("quest discussion access", () => {
+describe("quest discussion spaces", () => {
   const participation = (status) => ({ id: "p1", itemId: "1", status });
 
-  it("lets in joined and approved students only", () => {
-    expect(questDiscussionAccess(participation("joined"), "loaded").allowed).toBe(true);
-    expect(questDiscussionAccess(participation("approved"), "loaded").allowed).toBe(true);
-    expect(questDiscussionAccess(participation("pending"), "loaded")).toMatchObject({
+  it("uses separate active and submitted scopes", () => {
+    expect(questActiveScope("9")).toBe("quest:9:active");
+    expect(questSubmittedScope("9")).toBe("quest:9:submitted");
+  });
+
+  it("allows active space only before confirmed proof", () => {
+    expect(questActiveDiscussionAccess(participation("joined"), "loaded").allowed).toBe(true);
+    expect(
+      questActiveDiscussionAccess(participation("joined"), "loaded", { status: "pending" })
+    ).toMatchObject({ allowed: false, reason: "submitted" });
+    expect(questActiveDiscussionAccess(participation("pending"), "loaded")).toMatchObject({
       allowed: false,
-      reason: "pending",
+      reason: "submitted",
     });
-    expect(questDiscussionAccess(participation("rejected"), "loaded")).toMatchObject({
-      allowed: false,
-      reason: "rejected",
-    });
-    expect(questDiscussionAccess(undefined, "loaded")).toMatchObject({
+    expect(questActiveDiscussionAccess(undefined, "loaded")).toMatchObject({
       allowed: false,
       reason: "not-joined",
     });
   });
 
+  it("allows submitted space from pending through approved/rejected", () => {
+    expect(
+      questSubmittedDiscussionAccess(participation("joined"), "loaded")
+    ).toMatchObject({ allowed: false, reason: "not-submitted" });
+    expect(
+      questSubmittedDiscussionAccess(participation("pending"), "loaded")
+    ).toMatchObject({ allowed: true });
+    expect(
+      questSubmittedDiscussionAccess(participation("joined"), "loaded", { status: "rejected" })
+    ).toMatchObject({ allowed: true });
+    expect(
+      questSubmittedDiscussionAccess(participation("approved"), "loaded")
+    ).toMatchObject({ allowed: true });
+  });
+
   it("stays closed while membership is unknown", () => {
-    expect(questDiscussionAccess(undefined, "loading").allowed).toBe(false);
-    expect(questDiscussionAccess(undefined, "error")).toMatchObject({
+    expect(questActiveDiscussionAccess(undefined, "loading").allowed).toBe(false);
+    expect(questActiveDiscussionAccess(undefined, "error")).toMatchObject({
       allowed: false,
       reason: "unknown",
     });
@@ -104,13 +129,16 @@ describe("validation and filtering", () => {
 describe("sample discussion adapter", () => {
   it("keeps scopes apart, marks samples, and stores posts and replies in this tab", async () => {
     const grove = await demoListThreads("grove");
-    const quest = await demoListThreads("quest:1");
+    const active = await demoListThreads("quest:1:active");
+    const submitted = await demoListThreads("quest:1:submitted");
     expect(grove.length).toBeGreaterThan(20);
     expect(grove.every((thread) => thread.sample && thread.scope === "grove")).toBe(true);
-    expect(quest.every((thread) => thread.scope === "quest:1")).toBe(true);
+    expect(active.every((thread) => thread.scope === "quest:1:active")).toBe(true);
+    expect(active.length).toBeGreaterThan(0);
+    expect(submitted).toEqual([]);
 
     const created = await demoCreateThread(
-      "quest:1",
+      "quest:1:active",
       { title: "Meet at 9?", category: "teammates", body: "<b>bold</b>" },
       AUTHOR
     );
@@ -119,10 +147,27 @@ describe("sample discussion adapter", () => {
     const { thread, replies } = await demoGetThread(created.id);
     expect(thread.replyCount).toBe(1);
     expect(replies.map((reply) => reply.body)).toEqual(["Sure"]);
-    expect((await demoListThreads("quest:2")).some((t) => t.id === created.id)).toBe(false);
+    expect((await demoListThreads("quest:2:active")).some((t) => t.id === created.id)).toBe(false);
+    expect((await demoListThreads("quest:1:submitted")).some((t) => t.id === created.id)).toBe(
+      false
+    );
 
-    await expect(demoCreateReply(created.id, { body: " " }, AUTHOR)).rejects.toMatchObject({ status: 422 });
+    await expect(demoCreateReply(created.id, { body: " " }, AUTHOR)).rejects.toMatchObject({
+      status: 422,
+    });
     await expect(demoGetThread("nope")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("migrates legacy quest:{id} threads into the submitted space only", async () => {
+    const legacy = await demoCreateThread(
+      "quest:3",
+      { title: "Old spoiler", category: "tips", body: "Hidden answer" },
+      AUTHOR
+    );
+    const active = await demoListThreads("quest:3:active");
+    const submitted = await demoListThreads("quest:3:submitted");
+    expect(active.some((thread) => thread.id === legacy.id)).toBe(false);
+    expect(submitted.some((thread) => thread.id === legacy.id)).toBe(true);
   });
 });
 

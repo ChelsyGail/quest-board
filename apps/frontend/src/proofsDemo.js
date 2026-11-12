@@ -208,6 +208,7 @@ export async function demoApproveSubmission(id, actor) {
   submission.status = "approved";
   submission.reviewedAt = new Date().toISOString();
   submission.reviewerId = String(actor.id);
+  submission.awardedPoints = submission.pointValue || 0;
   writeStore(store);
   demoSetParticipationStatus(submission.userId, submission.itemId, "approved");
   demoAwardPoints(submission.userId, submission.pointValue || 0, {

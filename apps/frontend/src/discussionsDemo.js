@@ -1,7 +1,8 @@
 // Development-only sample discussions for the discussion prototype. Never used in
 // production builds and never talks to the API. Everything lives in sessionStorage for
 // this browser tab only: nothing posted here is seen by anyone else.
-const STORAGE_KEY = "questboard.demo.discussions.v1";
+// v2: separate quest:{id}:active and quest:{id}:submitted scopes.
+const STORAGE_KEY = "questboard.demo.discussions.v2";
 const TITLE_MAX = 120;
 const BODY_MAX = 4000;
 const REPLY_MAX = 2000;
@@ -91,16 +92,33 @@ function writeStore(store) {
   sessionStorage.setItem(STORAGE_KEY, JSON.stringify(store));
 }
 
+function shouldSeedQuestSamples(scope) {
+  // Active space gets sample teammate/help threads. Submitted starts empty (spoilers).
+  // Legacy `quest:{id}` is not freshly seeded; existing rows only appear in submitted lists.
+  return scope === "grove" || /:active$/.test(scope);
+}
+
 // Sample threads are added the first time a scope is opened in this tab.
 function seededStore(scope) {
   const store = readStore();
   if (!store.seededScopes.includes(scope)) {
-    const seeds = scope === "grove" ? GROVE_SEEDS : QUEST_SEEDS;
-    seeds.forEach((seed, index) => sampleThread(store, scope, seed, index));
+    if (shouldSeedQuestSamples(scope)) {
+      const seeds = scope === "grove" ? GROVE_SEEDS : QUEST_SEEDS;
+      seeds.forEach((seed, index) => sampleThread(store, scope, seed, index));
+    }
     store.seededScopes.push(scope);
     writeStore(store);
   }
   return store;
+}
+
+function listScopesFor(scope) {
+  const submitted = /^quest:([^:]+):submitted$/.exec(scope);
+  if (submitted) {
+    // Conservative migration: legacy quest:{id} threads are spoilers → submitted only.
+    return [scope, `quest:${submitted[1]}`];
+  }
+  return [scope];
 }
 
 function delay(result) {
@@ -123,8 +141,11 @@ export function resetDemoDiscussions() {
 
 export function demoListThreads(scope) {
   const store = seededStore(scope);
+  const allowed = new Set(listScopesFor(scope));
   return delay(
-    store.threads.filter((thread) => thread.scope === scope).map((thread) => withReplyCount(store, thread))
+    store.threads
+      .filter((thread) => allowed.has(thread.scope))
+      .map((thread) => withReplyCount(store, thread))
   );
 }
 
