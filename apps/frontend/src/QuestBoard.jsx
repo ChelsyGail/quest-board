@@ -11,6 +11,7 @@ import {
   categoryOptions,
   filtersActive as hasActiveFilters,
 } from "./questFilters.js";
+import ProofSubmit from "./ProofSubmit.jsx";
 import QuestCard from "./QuestCard.jsx";
 
 const SEARCH_DELAY_MS = 300;
@@ -400,12 +401,18 @@ function QuestBoard({
           {joined ? (
             <p className="message quest-joined">
               {participation.status === "pending"
-                ? "You've asked to join. The organizer hasn't approved it yet."
+                ? isQuest
+                  ? "Your proof is pending review."
+                  : "You're going to this event."
                 : participation.status === "rejected"
-                  ? "The organizer didn't approve your participation."
-                  : isQuest
-                    ? "You've joined this quest."
-                    : "You're going to this event."}
+                  ? isQuest
+                    ? "Your proof was rejected. You can read the feedback and submit again."
+                    : "Your RSVP was rejected."
+                  : participation.status === "approved"
+                    ? "Your proof was approved."
+                    : isQuest
+                      ? "You've joined this quest."
+                      : "You're going to this event."}
             </p>
           ) : detail.status === "gone" ? null : canJoin ? (
             <button
@@ -429,15 +436,41 @@ function QuestBoard({
             {actionMessage}
           </p>
         </article>
-        {withDiscussion && (
-          <QuestDiscussion
-            quest={shown}
-            participation={participation}
-            participationStatus={participationStatus}
-            author={author}
-            onSessionExpired={onSessionExpired}
-          />
-        )}
+        <div className="quest-detail-side">
+          {isQuest && canJoin && joined && (
+            <ProofSubmit
+              session={{
+                token: session.token,
+                userId: session.userId,
+                userName: author?.name,
+              }}
+              item={shown}
+              participationStatus={participation?.status || "joined"}
+              onSessionExpired={onSessionExpired}
+              onSubmitted={(submission) => {
+                setParticipations((current) => {
+                  const next = new Map(current);
+                  const previous = next.get(shown.id) || {
+                    id: `local-${shown.id}`,
+                    itemId: shown.id,
+                    status: "joined",
+                  };
+                  next.set(shown.id, { ...previous, status: submission.status });
+                  return next;
+                });
+              }}
+            />
+          )}
+          {withDiscussion && (
+            <QuestDiscussion
+              quest={shown}
+              participation={participation}
+              participationStatus={participationStatus}
+              author={author}
+              onSessionExpired={onSessionExpired}
+            />
+          )}
+        </div>
       </div>
     );
   } else {

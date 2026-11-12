@@ -12,6 +12,7 @@ import {
 } from "./api.js";
 import { roleLabel } from "./format.js";
 import MyRoleRequests from "./MyRoleRequests.jsx";
+import { ProfileAchievements } from "./RewardsPage.jsx";
 
 // `profile` comes from GET /users/me. It is null when this backend has no /users/me
 // yet; then only the fields the user fills in are sent.
@@ -191,6 +192,8 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
       <header className="page-header">
         <h2 className="screen-title">Your account</h2>
       </header>
+
+      <ProfileAchievements session={session} onSessionExpired={onSessionExpired} />
 
       {isLoaded ? (
         <>

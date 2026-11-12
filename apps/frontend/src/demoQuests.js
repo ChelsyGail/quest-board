@@ -354,3 +354,18 @@ export function demoJoinItem(itemId, userId) {
   writeStore(store);
   return delay({ ...participation });
 }
+
+// Used by the Sprint 5 proof demo so My Quests shows Pending/Approved/Rejected.
+export function demoSetParticipationStatus(userId, itemId, status) {
+  const store = readStore();
+  const participations = userParticipations(store, userId);
+  const participation = participations.find((entry) => entry.itemId === String(itemId));
+  if (!participation) return false;
+  participation.status = status;
+  writeStore(store);
+  return true;
+}
+
+export function demoGetItemSync(itemId) {
+  return readStore().items.find((entry) => entry.id === String(itemId)) || null;
+}

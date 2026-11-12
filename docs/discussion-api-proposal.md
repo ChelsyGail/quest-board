@@ -1,10 +1,12 @@
 # Discussion API — proposal
 
-**Status: proposal, not implemented.** The backend has no discussion tables or routes. The
-quest discussion section and Quest Grove are a frontend prototype: with
-`VITE_DISCUSSIONS_DEMO=true` on the dev server they use sample data kept in one browser tab
+**Status: proposal, not implemented (re-verified 2026-11-12).** The backend still has no
+discussion tables or routes on `main` or open teammate branches. The quest discussion
+section and Quest Grove remain a frontend prototype: with `VITE_DISCUSSIONS_DEMO=true` on
+the DEV server they use sample data kept in one browser tab
 (`apps/frontend/src/discussionsDemo.js`). Without it, and in every production build, they
-show that discussions aren't available. This document describes what the backend would need
+show that discussions aren't available. Sprint 5 prioritized proof/moderation/rewards; the
+Grove UI was preserved and not rebuilt. This document describes what the backend would need
 so the prototype can be switched to a real service.
 
 ## Scopes

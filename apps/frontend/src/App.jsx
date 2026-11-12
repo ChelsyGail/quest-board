@@ -11,10 +11,14 @@ import {
 import { resetDemoDiscussions } from "./discussionsDemo.js";
 import JoinedQuests from "./JoinedQuests.jsx";
 import Login from "./Login.jsx";
+import ModeratorQueue from "./ModeratorQueue.jsx";
 import MyQuests from "./MyQuests.jsx";
 import Profile from "./Profile.jsx";
+import { resetDemoProofs } from "./proofs.js";
 import QuestBoard from "./QuestBoard.jsx";
 import QuestGrove from "./QuestGrove.jsx";
+import RewardsPage, { OrganizerRewards } from "./RewardsPage.jsx";
+import { resetDemoRewards } from "./rewards.js";
 import Signup from "./Signup.jsx";
 
 // The session is { token, userId, expiresAt } and is never stored with a password.
@@ -253,6 +257,8 @@ function App() {
     setIsResettingDemo(true);
     setOpenedItem(null);
     resetDemoDiscussions();
+    resetDemoProofs();
+    resetDemoRewards();
     await resetDemoQuests();
     setDemoVersion((version) => version + 1);
     setIsResettingDemo(false);
@@ -298,7 +304,9 @@ function App() {
     const showAdmin = roles.includes("admin") && roleRequestsEnabled();
     const isOrganizer = roles.includes("organizer");
     const isStudent = roles.includes("student");
+    const isModerator = roles.includes("moderator");
     const author = { id: session.userId, name: profile?.name || "You" };
+    const sessionWithName = { ...session, userName: author.name };
 
     const navPages = [];
     if (profileStatus === "loaded" && questsOn) {
@@ -306,6 +314,8 @@ function App() {
       if (isStudent) navPages.push({ id: "joined", label: "My quests" });
       if (isOrganizer) navPages.push({ id: "my-quests", label: "My items" });
       navPages.push({ id: "grove", label: "Quest Grove" });
+      if (isStudent || isOrganizer) navPages.push({ id: "rewards", label: "Rewards" });
+      if (isModerator) navPages.push({ id: "moderation", label: "Proof review" });
     }
 
     // The event form always uses the live API, so it isn't offered in demo mode.
@@ -392,6 +402,31 @@ function App() {
           author={author}
           onSessionExpired={handleSessionRejected}
         />
+      );
+    } else if (currentPage === "moderation") {
+      body = (
+        <ModeratorQueue
+          key={`moderation-${demoVersion}`}
+          session={sessionWithName}
+          onSessionExpired={handleSessionRejected}
+        />
+      );
+    } else if (currentPage === "rewards") {
+      body = (
+        <div className="page-stack">
+          <RewardsPage
+            key={`rewards-${demoVersion}`}
+            session={sessionWithName}
+            onSessionExpired={handleSessionRejected}
+          />
+          {isOrganizer && (
+            <OrganizerRewards
+              key={`org-rewards-inline-${demoVersion}`}
+              session={sessionWithName}
+              onSessionExpired={handleSessionRejected}
+            />
+          )}
+        </div>
       );
     } else if (currentPage === "my-quests") {
       body = (
