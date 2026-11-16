@@ -27,6 +27,7 @@ from services.review_service import NotAModeratorError
 from services.review_service import QueueEntry
 from services.review_service import QueuePage
 from services.review_service import ReviewRecord
+from services.review_service import SelfReviewError
 from services.review_service import SubmissionDetail
 from services.review_service import SubmissionNotPendingError
 from utilities.auth import build_current_user_dependency
@@ -114,6 +115,8 @@ def setup_review_router(app: FastAPI, services: Services):
             return submission_not_found()
         except NotAModeratorError:
             return _not_a_moderator()
+        except SelfReviewError:
+            return _self_review()
         except SubmissionNotPendingError:
             return _not_pending()
         return ReviewResponse(data=to_review_resource(record))
@@ -138,6 +141,8 @@ def setup_review_router(app: FastAPI, services: Services):
             return submission_not_found()
         except NotAModeratorError:
             return _not_a_moderator()
+        except SelfReviewError:
+            return _self_review()
         except SubmissionNotPendingError:
             return _not_pending()
         return ReviewResponse(data=to_review_resource(record))
@@ -167,6 +172,17 @@ def _not_a_moderator():
         "not_a_moderator",
         "Not a moderator",
         "Only moderators can review submissions.",
+    )
+
+
+def _self_review():
+    return json_api_error_response(
+        ReviewErrorResponse,
+        status.HTTP_403_FORBIDDEN,
+        "self_review",
+        "Cannot review your own submission",
+        "Another moderator has to review an attempt you submitted.",
+        "/submission_id",
     )
 
 

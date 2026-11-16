@@ -40,6 +40,10 @@ class NotAModeratorError(Exception):
     """The reviewer lost the moderator role between sign-in and the decision."""
 
 
+class SelfReviewError(Exception):
+    """A moderator cannot decide their own attempt (BE-48)."""
+
+
 class SubmissionNotPendingError(Exception):
     """The attempt is not the one awaiting review: already decided, or replaced."""
 
@@ -204,6 +208,12 @@ class ReviewService:
         with self.engine.begin() as connection:
             participation = self._lock_attempt(connection, submission_id)
             self._require_moderator(connection, reviewer_id)
+            if participation.user_id == reviewer_id:
+                logger.warning(
+                    "Self-review refused",
+                    extra={"submission_id": submission_id, "reviewer_id": reviewer_id},
+                )
+                raise SelfReviewError
             if (
                 participation.status != ParticipationStatus.PENDING.value
                 or participation.current_submission_id != submission_id
