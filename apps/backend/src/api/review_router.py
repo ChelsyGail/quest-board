@@ -1,19 +1,31 @@
 import logging
 
+from api.catalogue_router import to_item_attributes
+from api.proof_router import to_submission_media
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import FastAPI
+from fastapi import Path
 from fastapi import Query
+from fastapi import status
+from models.catalogue import ItemResourceData
 from models.responses.review import QueueResponse
 from models.responses.review import ReviewErrorResponse
+from models.responses.review import SubmissionDetailResponse
 from models.review import QueueEntryAttributes
 from models.review import QueueEntryResourceData
+from models.review import StudentSummary
+from models.review import SubmissionDetailAttributes
+from models.review import SubmissionDetailResourceData
 from models.users import UserRole
+from services.proof_service import SubmissionNotFoundError
 from services.review_service import QueueEntry
 from services.review_service import QueuePage
+from services.review_service import SubmissionDetail
 from utilities.auth import build_current_user_dependency
 from utilities.auth import CurrentUser
 from utilities.auth import require_roles
+from utilities.json_api_errors import json_api_error_response
 from utilities.services import Services
 
 logger = logging.getLogger(__name__)
@@ -48,7 +60,61 @@ def setup_review_router(app: FastAPI, services: Services):
             meta={"page": _page_meta(result)},
         )
 
+    @router.get(
+        "/submissions/{submission_id}",
+        response_model=SubmissionDetailResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": ReviewErrorResponse},
+            403: {"model": ReviewErrorResponse},
+            404: {"model": ReviewErrorResponse},
+        },
+    )
+    def get_submission(
+        submission_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(require_moderator),
+    ):
+        try:
+            detail = services.review_service.get_submission(submission_id)
+        except SubmissionNotFoundError:
+            return submission_not_found()
+        return SubmissionDetailResponse(data=_to_detail(detail))
+
     app.include_router(router)
+
+
+def _to_detail(detail: SubmissionDetail) -> SubmissionDetailResourceData:
+    submission = detail.submission
+    return SubmissionDetailResourceData(
+        id=str(submission.submission_id),
+        attributes=SubmissionDetailAttributes(
+            participation_id=str(submission.participation_id),
+            attempt_number=submission.attempt_number,
+            status=submission.status,
+            text=submission.text,
+            media=[to_submission_media(media) for media in submission.media],
+            twist=None,
+            submitted_at=submission.submitted_at,
+            student=StudentSummary(
+                user_id=str(submission.user_id), name=detail.student_name
+            ),
+            quest=ItemResourceData(
+                id=str(detail.item.item_id),
+                attributes=to_item_attributes(detail.item),
+            ),
+        ),
+    )
+
+
+def submission_not_found():
+    return json_api_error_response(
+        ReviewErrorResponse,
+        status.HTTP_404_NOT_FOUND,
+        "submission_not_found",
+        "Submission not found",
+        "There is no submission with that id.",
+        "/submission_id",
+    )
 
 
 def _to_queue_entry(entry: QueueEntry) -> QueueEntryResourceData:

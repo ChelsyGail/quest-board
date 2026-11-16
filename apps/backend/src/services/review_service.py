@@ -7,6 +7,10 @@ from datetime import datetime
 from database.connection import create_database_engine
 from models.catalogue import ParticipationStatus
 from services.catalogue_service import from_utc_naive
+from services.catalogue_service import item_record_from_row
+from services.catalogue_service import ItemRecord
+from services.proof_service import load_submission
+from services.proof_service import SubmissionRecord
 from sqlalchemy import text
 from utilities.settings import DatabaseSettings
 
@@ -25,6 +29,13 @@ class QueueEntry:
     has_text: bool
     media_count: int
     submitted_at: datetime
+
+
+@dataclass(frozen=True)
+class SubmissionDetail:
+    submission: SubmissionRecord
+    item: ItemRecord
+    student_name: str
 
 
 @dataclass(frozen=True)
@@ -109,4 +120,23 @@ class ReviewService:
             page_number=page_number,
             page_size=page_size,
             total_items=total_items,
+        )
+
+    def get_submission(self, submission_id: int) -> SubmissionDetail:
+        """BE-45: the attempt, the quest it is for and who sent it. Raises
+        SubmissionNotFoundError for an unknown id."""
+        with self.engine.connect() as connection:
+            submission = load_submission(connection, submission_id)
+            item_row = connection.execute(
+                text("SELECT * FROM catalogue_items WHERE item_id = :item_id"),
+                {"item_id": submission.item_id},
+            ).one()
+            student_name = connection.execute(
+                text("SELECT name FROM users WHERE user_id = :user_id"),
+                {"user_id": submission.user_id},
+            ).scalar_one()
+        return SubmissionDetail(
+            submission=submission,
+            item=item_record_from_row(item_row),
+            student_name=student_name,
         )

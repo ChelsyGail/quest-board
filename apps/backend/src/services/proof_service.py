@@ -35,6 +35,10 @@ class NotYourParticipationError(Exception):
     """Proof can only be submitted on, or read from, the student's own attempt."""
 
 
+class SubmissionNotFoundError(Exception):
+    pass
+
+
 class ProofNotAcceptedError(Exception):
     """Only quests take proof; an event RSVP has nothing to prove."""
 
@@ -471,44 +475,62 @@ class ProofService:
             {"participation_id": participation_id},
         ).scalar_one()
 
-    def _load_submission(self, connection, submission_id: int) -> SubmissionRecord:
-        row = connection.execute(
-            text(f"{SELECT_SUBMISSION_COLUMNS} WHERE s.submission_id = :submission_id"),
-            {"submission_id": submission_id},
-        ).one()
-        return self._to_record(connection, row)
+    @staticmethod
+    def _load_submission(connection, submission_id: int) -> SubmissionRecord:
+        return load_submission(connection, submission_id)
 
-    def _to_record(self, connection, row) -> SubmissionRecord:
-        media_rows = connection.execute(
-            text(
-                f"""{SELECT_MEDIA_COLUMNS}
-                WHERE submission_id = :submission_id
-                ORDER BY media_id
-                """
-            ),
-            {"submission_id": row.submission_id},
-        ).all()
-        return SubmissionRecord(
-            submission_id=row.submission_id,
-            participation_id=row.participation_id,
-            item_id=row.item_id,
-            user_id=row.user_id,
-            attempt_number=row.attempt_number,
-            text=row.text_proof,
-            media=[self._to_media(media_row) for media_row in media_rows],
-            status=SubmissionStatus.PENDING,
-            submitted_at=from_utc_naive(row.created_at),
-        )
+    @staticmethod
+    def _to_record(connection, row) -> SubmissionRecord:
+        return submission_record_from_row(connection, row)
 
     @staticmethod
     def _to_media(row) -> MediaRecord:
-        return MediaRecord(
-            media_id=row.media_id,
-            owner_id=row.owner_id,
-            submission_id=row.submission_id,
-            content_type=row.content_type,
-            kind=MediaKind(row.media_kind),
-            size_bytes=row.size_bytes,
-            object_key=row.object_key,
-            uploaded_at=from_utc_naive(row.created_at),
-        )
+        return media_record_from_row(row)
+
+
+def media_record_from_row(row) -> MediaRecord:
+    return MediaRecord(
+        media_id=row.media_id,
+        owner_id=row.owner_id,
+        submission_id=row.submission_id,
+        content_type=row.content_type,
+        kind=MediaKind(row.media_kind),
+        size_bytes=row.size_bytes,
+        object_key=row.object_key,
+        uploaded_at=from_utc_naive(row.created_at),
+    )
+
+
+def load_submission(connection, submission_id: int) -> SubmissionRecord:
+    """One attempt with its files, read on the caller's connection so it sees
+    the caller's own uncommitted writes. Shared with the review side."""
+    row = connection.execute(
+        text(f"{SELECT_SUBMISSION_COLUMNS} WHERE s.submission_id = :submission_id"),
+        {"submission_id": submission_id},
+    ).one_or_none()
+    if row is None:
+        raise SubmissionNotFoundError
+    return submission_record_from_row(connection, row)
+
+
+def submission_record_from_row(connection, row) -> SubmissionRecord:
+    media_rows = connection.execute(
+        text(
+            f"""{SELECT_MEDIA_COLUMNS}
+            WHERE submission_id = :submission_id
+            ORDER BY media_id
+            """
+        ),
+        {"submission_id": row.submission_id},
+    ).all()
+    return SubmissionRecord(
+        submission_id=row.submission_id,
+        participation_id=row.participation_id,
+        item_id=row.item_id,
+        user_id=row.user_id,
+        attempt_number=row.attempt_number,
+        text=row.text_proof,
+        media=[media_record_from_row(media_row) for media_row in media_rows],
+        status=SubmissionStatus.PENDING,
+        submitted_at=from_utc_naive(row.created_at),
+    )
