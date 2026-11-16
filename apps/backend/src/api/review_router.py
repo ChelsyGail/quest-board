@@ -15,6 +15,7 @@ from models.responses.review import ReviewResponse
 from models.responses.review import SubmissionDetailResponse
 from models.review import QueueEntryAttributes
 from models.review import QueueEntryResourceData
+from models.review import RejectionCreate
 from models.review import ReviewAttributes
 from models.review import ReviewResourceData
 from models.review import StudentSummary
@@ -108,6 +109,30 @@ def setup_review_router(app: FastAPI, services: Services):
         try:
             record = services.review_service.approve(
                 submission_id, current_user.user_id
+            )
+        except SubmissionNotFoundError:
+            return submission_not_found()
+        except NotAModeratorError:
+            return _not_a_moderator()
+        except SubmissionNotPendingError:
+            return _not_pending()
+        return ReviewResponse(data=to_review_resource(record))
+
+    @router.post(
+        "/submissions/{submission_id}/reject",
+        response_model=ReviewResponse,
+        response_model_exclude_none=True,
+        status_code=status.HTTP_201_CREATED,
+        responses=DECISION_ERROR_RESPONSES,
+    )
+    def reject_submission(
+        rejection: RejectionCreate,
+        submission_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(require_moderator),
+    ):
+        try:
+            record = services.review_service.reject(
+                submission_id, current_user.user_id, rejection.feedback
             )
         except SubmissionNotFoundError:
             return submission_not_found()

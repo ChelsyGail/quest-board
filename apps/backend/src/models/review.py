@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 from typing import Literal
 
 from models.catalogue import ItemResourceData
 from models.proof import SubmissionMedia
 from models.proof import SubmissionStatus
 from pydantic import BaseModel
+from pydantic import ConfigDict
+from pydantic import StringConstraints
 
 
 class QueueEntryAttributes(BaseModel):
@@ -73,3 +76,16 @@ class ReviewResourceData(BaseModel):
     type: Literal["reviews"] = "reviews"
     id: str
     attributes: ReviewAttributes
+
+
+Feedback = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
+]
+
+
+class RejectionCreate(BaseModel):
+    """A rejection has to tell the student what to fix (BE-47)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    feedback: Feedback

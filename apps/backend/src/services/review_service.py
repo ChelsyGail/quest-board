@@ -178,6 +178,22 @@ class ReviewService:
             lambda: self._decide(submission_id, reviewer_id, SubmissionStatus.APPROVED)
         )
 
+    def reject(
+        self, submission_id: int, reviewer_id: int, feedback: str
+    ) -> ReviewRecord:
+        """BE-47: saves a Rejected review with the moderator's feedback and sets
+        the participation to Rejected. Nothing is awarded; the student may send
+        a new attempt (BE-41)."""
+        logger.info(
+            "Rejecting submission",
+            extra={"submission_id": submission_id, "reviewer_id": reviewer_id},
+        )
+        return with_deadlock_retry(
+            lambda: self._decide(
+                submission_id, reviewer_id, SubmissionStatus.REJECTED, feedback
+            )
+        )
+
     def _decide(
         self,
         submission_id: int,
