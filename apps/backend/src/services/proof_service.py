@@ -7,6 +7,7 @@ from datetime import datetime
 
 from database.connection import create_database_engine
 from models.catalogue import ItemKind
+from models.catalogue import ParticipationStatus
 from models.proof import SubmissionCreate
 from models.proof import SubmissionStatus
 from services.catalogue_service import from_utc_naive
@@ -182,7 +183,10 @@ class ProofService:
     def submit(
         self, user_id: int, participation_id: int, submission: SubmissionCreate
     ) -> SubmissionRecord:
-        """Adds a new attempt to the student's own participation in a quest."""
+        """Adds a new attempt to the student's own participation in a quest and
+        moves the participation to Pending. Both happen in one transaction
+        (BE-39), so a participation is never Pending without an attempt to
+        review, nor an attempt left behind a participation still at Joined."""
         logger.info(
             "Submitting proof",
             extra={"user_id": user_id, "participation_id": participation_id},
@@ -225,12 +229,14 @@ class ProofService:
                 text(
                     """
                     UPDATE participations
-                    SET current_submission_id = :submission_id
+                    SET current_submission_id = :submission_id,
+                        status = :pending
                     WHERE participation_id = :participation_id
                     """
                 ),
                 {
                     "submission_id": submission_id,
+                    "pending": ParticipationStatus.PENDING.value,
                     "participation_id": participation.participation_id,
                 },
             )
