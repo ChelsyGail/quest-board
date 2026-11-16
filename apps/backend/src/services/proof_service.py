@@ -4,6 +4,8 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 
 from database.connection import create_database_engine
 from models.catalogue import ItemKind
@@ -11,6 +13,7 @@ from models.catalogue import ParticipationStatus
 from models.proof import SubmissionCreate
 from models.proof import SubmissionStatus
 from services.catalogue_service import from_utc_naive
+from services.catalogue_service import to_utc_naive
 from sqlalchemy import bindparam
 from sqlalchemy import text
 from utilities.media_types import ALLOWED_MEDIA_TYPES
@@ -230,6 +233,51 @@ class ProofService:
             )
             raise MediaNotFoundError from error
         return record, data
+
+    def delete_abandoned_uploads(
+        self, older_than: timedelta, now: datetime | None = None
+    ) -> int:
+        """BE-43: removes uploads that never made it into a submission (the app
+        crashed, the student gave up, the submission was refused) once they are
+        older than `older_than`. Returns how many were removed.
+
+        The rows go first, in one transaction, and the files after it commits:
+        if deleting a file fails it is only an orphaned file to retry by hand,
+        never a row that points at nothing. SKIP LOCKED leaves alone any upload
+        a submission is attaching at this very moment.
+        """
+        cutoff = to_utc_naive((now or datetime.now(timezone.utc)) - older_than)
+        with self.engine.begin() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT media_id, object_key
+                    FROM submission_media
+                    WHERE submission_id IS NULL AND created_at < :cutoff
+                    ORDER BY media_id
+                    FOR UPDATE SKIP LOCKED
+                    """
+                ),
+                {"cutoff": cutoff},
+            ).all()
+            if rows:
+                connection.execute(
+                    text(
+                        "DELETE FROM submission_media WHERE media_id IN :media_ids"
+                    ).bindparams(bindparam("media_ids", expanding=True)),
+                    {"media_ids": [row.media_id for row in rows]},
+                )
+
+        for row in rows:
+            try:
+                self.object_store.delete(row.object_key)
+            except Exception:
+                logger.exception(
+                    "Could not delete abandoned upload from storage",
+                    extra={"media_id": row.media_id},
+                )
+        logger.info("Cleaned up abandoned uploads", extra={"deleted": len(rows)})
+        return len(rows)
 
     def submit(
         self, user_id: int, participation_id: int, submission: SubmissionCreate
