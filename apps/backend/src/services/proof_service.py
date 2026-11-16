@@ -35,6 +35,18 @@ class ProofNotAcceptedError(Exception):
     """Only quests take proof; an event RSVP has nothing to prove."""
 
 
+class AttemptPendingError(Exception):
+    """An earlier attempt is still waiting for a moderator (BE-40)."""
+
+
+class AlreadyApprovedError(Exception):
+    """The quest is already completed; there is nothing left to prove (BE-40)."""
+
+
+class SubmissionNotAllowedError(Exception):
+    """The participation is in a state that does not take a new attempt."""
+
+
 class EmptySubmissionError(Exception):
     """An attempt needs at least some text or one file."""
 
@@ -99,6 +111,9 @@ class SubmissionRecord:
     status: SubmissionStatus
     submitted_at: datetime
 
+
+# Where a new attempt may start from.
+SUBMITTABLE_STATUSES = frozenset({ParticipationStatus.JOINED})
 
 SELECT_MEDIA_COLUMNS = """
     SELECT media_id, owner_id, submission_id, content_type, media_kind,
@@ -195,6 +210,7 @@ class ProofService:
             participation = self._lock_own_quest_participation(
                 connection, user_id, participation_id
             )
+            self._check_can_submit(participation)
             self._check_required_proof(participation, submission)
             self._lock_attachable_media(connection, user_id, submission.media_ids)
             attempt_number = self._next_attempt_number(connection, participation_id)
@@ -306,6 +322,19 @@ class ProofService:
         if row.kind != ItemKind.QUEST.value:
             raise ProofNotAcceptedError
         return row
+
+    @staticmethod
+    def _check_can_submit(participation) -> None:
+        """BE-40: one attempt in front of moderators at a time, and none once the
+        quest is approved. Read from the row locked above, so two submissions
+        sent together cannot both see Joined."""
+        current = ParticipationStatus(participation.status)
+        if current == ParticipationStatus.PENDING:
+            raise AttemptPendingError
+        if current == ParticipationStatus.APPROVED:
+            raise AlreadyApprovedError
+        if current not in SUBMITTABLE_STATUSES:
+            raise SubmissionNotAllowedError
 
     @staticmethod
     def _check_required_proof(participation, submission: SubmissionCreate) -> None:

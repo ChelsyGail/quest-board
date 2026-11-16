@@ -22,6 +22,8 @@ from models.responses.proof import MediaResponse
 from models.responses.proof import SubmissionErrorResponse
 from models.responses.proof import SubmissionListResponse
 from models.responses.proof import SubmissionResponse
+from services.proof_service import AlreadyApprovedError
+from services.proof_service import AttemptPendingError
 from services.proof_service import EmptySubmissionError
 from services.proof_service import EmptyUploadError
 from services.proof_service import MediaContentMismatchError
@@ -32,6 +34,7 @@ from services.proof_service import MissingRequiredProofError
 from services.proof_service import NotYourParticipationError
 from services.proof_service import ParticipationNotFoundError
 from services.proof_service import ProofNotAcceptedError
+from services.proof_service import SubmissionNotAllowedError
 from services.proof_service import SubmissionRecord
 from services.proof_service import UnsupportedMediaTypeError
 from utilities.auth import build_current_user_dependency
@@ -130,6 +133,12 @@ def setup_proof_router(app: FastAPI, services: Services):
             return _not_your_participation()
         except ProofNotAcceptedError:
             return _proof_not_accepted()
+        except AttemptPendingError:
+            return _attempt_pending()
+        except AlreadyApprovedError:
+            return _already_approved()
+        except SubmissionNotAllowedError:
+            return _submission_not_allowed()
         except MissingRequiredProofError as error:
             return _missing_required_proof(error.fields)
         except EmptySubmissionError:
@@ -341,4 +350,38 @@ def _missing_required_proof(fields: list[str]):
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content=document.model_dump(mode="json", exclude_none=True),
+    )
+
+
+def _attempt_pending():
+    return json_api_error_response(
+        SubmissionErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "attempt_pending",
+        "Attempt awaiting review",
+        "Your last attempt is still waiting for a moderator. "
+        "You can try again if it is rejected.",
+        "/participation_id",
+    )
+
+
+def _already_approved():
+    return json_api_error_response(
+        SubmissionErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "already_approved",
+        "Quest already completed",
+        "This quest has already been approved for you.",
+        "/participation_id",
+    )
+
+
+def _submission_not_allowed():
+    return json_api_error_response(
+        SubmissionErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "submission_not_allowed",
+        "Cannot submit now",
+        "This participation does not accept a new attempt.",
+        "/participation_id",
     )
