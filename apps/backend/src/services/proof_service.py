@@ -131,8 +131,12 @@ class SubmissionRecord:
     reviewed_at: datetime | None = None
 
 
-# Where a new attempt may start from.
-SUBMITTABLE_STATUSES = frozenset({ParticipationStatus.JOINED})
+# Where a new attempt may start from: a first attempt, or a retry after a
+# rejection (BE-41). The rejected attempt and its review stay as they are; the
+# retry is a new row with the next attempt number.
+SUBMITTABLE_STATUSES = frozenset(
+    {ParticipationStatus.JOINED, ParticipationStatus.REJECTED}
+)
 
 SELECT_MEDIA_COLUMNS = """
     SELECT media_id, owner_id, submission_id, content_type, media_kind,
