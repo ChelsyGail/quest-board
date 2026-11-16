@@ -70,6 +70,9 @@ class SubmissionMedia(BaseModel):
     content_type: str
     kind: MediaKind
     size_bytes: int
+    # Path under the API root (/api/v1) that streams the file. It only works
+    # with the owner's or a moderator's token (BE-42).
+    url: str
 
 
 class SubmissionAttributes(BaseModel):

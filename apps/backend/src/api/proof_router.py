@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi import Header
 from fastapi import Path
 from fastapi import Request
+from fastapi import Response
 from fastapi import status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
@@ -22,11 +23,14 @@ from models.responses.proof import MediaResponse
 from models.responses.proof import SubmissionErrorResponse
 from models.responses.proof import SubmissionListResponse
 from models.responses.proof import SubmissionResponse
+from models.users import UserRole
 from services.proof_service import AlreadyApprovedError
 from services.proof_service import AttemptPendingError
 from services.proof_service import EmptySubmissionError
 from services.proof_service import EmptyUploadError
+from services.proof_service import MediaAccessDeniedError
 from services.proof_service import MediaContentMismatchError
+from services.proof_service import MediaNotFoundError
 from services.proof_service import MediaNotUsableError
 from services.proof_service import MediaRecord
 from services.proof_service import MediaTooLargeError
@@ -110,6 +114,42 @@ def setup_proof_router(app: FastAPI, services: Services):
         except MediaContentMismatchError:
             return _media_content_mismatch()
         return MediaResponse(data=to_media_resource(record))
+
+    @router.get(
+        "/media/{media_id}",
+        response_class=Response,
+        responses={
+            200: {"content": {t: {} for t in ALLOWED_MEDIA_TYPES}},
+            401: {"model": MediaErrorResponse},
+            403: {"model": MediaErrorResponse},
+            404: {"model": MediaErrorResponse},
+        },
+    )
+    def read_media(
+        media_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        """Streams proof media through the API. Only the student who uploaded it
+        and moderators may read it; the storage itself is never public."""
+        try:
+            record, data = services.proof_service.read_media(
+                media_id,
+                current_user.user_id,
+                current_user.has_role(UserRole.MODERATOR),
+            )
+        except MediaNotFoundError:
+            return _media_not_found()
+        except MediaAccessDeniedError:
+            return _media_forbidden()
+        return Response(
+            content=data,
+            media_type=record.content_type,
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": "inline",
+            },
+        )
 
     @router.post(
         "/participations/{participation_id}/submissions",
@@ -207,7 +247,12 @@ def to_submission_media(record: MediaRecord) -> SubmissionMedia:
         content_type=record.content_type,
         kind=record.kind,
         size_bytes=record.size_bytes,
+        url=media_url(record.media_id),
     )
+
+
+def media_url(media_id: int) -> str:
+    return f"/media/{media_id}"
 
 
 def to_submission_resource(record: SubmissionRecord) -> SubmissionResourceData:
@@ -384,4 +429,26 @@ def _submission_not_allowed():
         "Cannot submit now",
         "This participation does not accept a new attempt.",
         "/participation_id",
+    )
+
+
+def _media_not_found():
+    return json_api_error_response(
+        MediaErrorResponse,
+        status.HTTP_404_NOT_FOUND,
+        "media_not_found",
+        "Media not found",
+        "There is no proof file with that id.",
+        "/media_id",
+    )
+
+
+def _media_forbidden():
+    return json_api_error_response(
+        MediaErrorResponse,
+        status.HTTP_403_FORBIDDEN,
+        "media_forbidden",
+        "Not allowed to view this file",
+        "Proof files are visible only to the student who uploaded them and to moderators.",
+        "/media_id",
     )

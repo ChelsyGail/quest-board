@@ -17,6 +17,7 @@ from utilities.media_types import ALLOWED_MEDIA_TYPES
 from utilities.media_types import content_matches
 from utilities.media_types import MAX_BYTES
 from utilities.media_types import MediaKind
+from utilities.object_store import ObjectNotFoundError
 from utilities.object_store import ObjectStore
 from utilities.settings import DatabaseSettings
 
@@ -58,6 +59,14 @@ class MissingRequiredProofError(Exception):
     def __init__(self, fields: list[str]):
         super().__init__(fields)
         self.fields = fields
+
+
+class MediaNotFoundError(Exception):
+    pass
+
+
+class MediaAccessDeniedError(Exception):
+    """Proof is readable by its owner and by moderators, nobody else (BE-42)."""
 
 
 class UnsupportedMediaTypeError(Exception):
@@ -194,6 +203,33 @@ class ProofService:
             extra={"media_id": row.media_id, "size_bytes": len(data)},
         )
         return self._to_media(row)
+
+    def read_media(
+        self, media_id: int, viewer_id: int, viewer_is_moderator: bool
+    ) -> tuple[MediaRecord, bytes]:
+        """The bytes of one upload, for its owner or for a moderator reviewing it."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(f"{SELECT_MEDIA_COLUMNS} WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).one_or_none()
+        if row is None:
+            raise MediaNotFoundError
+        record = self._to_media(row)
+        if record.owner_id != viewer_id and not viewer_is_moderator:
+            logger.warning(
+                "Proof media read refused",
+                extra={"media_id": media_id, "viewer_id": viewer_id},
+            )
+            raise MediaAccessDeniedError
+        try:
+            data = self.object_store.get(record.object_key)
+        except ObjectNotFoundError as error:
+            logger.error(
+                "Proof media missing from storage", extra={"media_id": media_id}
+            )
+            raise MediaNotFoundError from error
+        return record, data
 
     def submit(
         self, user_id: int, participation_id: int, submission: SubmissionCreate
