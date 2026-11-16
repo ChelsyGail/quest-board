@@ -84,6 +84,9 @@ class SubmissionAttributes(BaseModel):
     media: list[SubmissionMedia]
     status: SubmissionStatus
     submitted_at: datetime
+    # The moderator's feedback and when they decided; null while Pending.
+    feedback: str | None = None
+    reviewed_at: datetime | None = None
 
 
 class SubmissionResourceData(BaseModel):

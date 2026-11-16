@@ -126,6 +126,9 @@ class SubmissionRecord:
     media: list[MediaRecord]
     status: SubmissionStatus
     submitted_at: datetime
+    # Set once a moderator has decided this attempt.
+    feedback: str | None = None
+    reviewed_at: datetime | None = None
 
 
 # Where a new attempt may start from.
@@ -139,9 +142,12 @@ SELECT_MEDIA_COLUMNS = """
 
 SELECT_SUBMISSION_COLUMNS = """
     SELECT s.submission_id, s.participation_id, s.attempt_number, s.text_proof,
-           s.created_at, p.item_id, p.user_id
+           s.created_at, p.item_id, p.user_id,
+           r.decision AS review_decision, r.feedback AS review_feedback,
+           r.created_at AS reviewed_at
     FROM submissions AS s
     JOIN participations AS p ON p.participation_id = s.participation_id
+    LEFT JOIN reviews AS r ON r.submission_id = s.submission_id
 """
 
 
@@ -531,6 +537,12 @@ def submission_record_from_row(connection, row) -> SubmissionRecord:
         attempt_number=row.attempt_number,
         text=row.text_proof,
         media=[media_record_from_row(media_row) for media_row in media_rows],
-        status=SubmissionStatus.PENDING,
+        status=(
+            SubmissionStatus(row.review_decision)
+            if row.review_decision is not None
+            else SubmissionStatus.PENDING
+        ),
         submitted_at=from_utc_naive(row.created_at),
+        feedback=row.review_feedback,
+        reviewed_at=from_utc_naive(row.reviewed_at),
     )

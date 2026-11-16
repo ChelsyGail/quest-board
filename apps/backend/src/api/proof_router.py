@@ -267,6 +267,8 @@ def to_submission_resource(record: SubmissionRecord) -> SubmissionResourceData:
             media=[to_submission_media(media) for media in record.media],
             status=record.status,
             submitted_at=record.submitted_at,
+            feedback=record.feedback,
+            reviewed_at=record.reviewed_at,
         ),
     )
 

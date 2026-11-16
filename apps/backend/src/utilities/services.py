@@ -5,6 +5,7 @@ from services.catalogue_service import CatalogueService
 from services.health_service import HealthService
 from services.participation_service import ParticipationService
 from services.proof_service import ProofService
+from services.recognition_service import RecognitionService
 from services.review_service import ReviewService
 from services.role_request_service import RoleRequestService
 from services.user_service import UserService
@@ -24,6 +25,7 @@ class Services:
     participation_service: ParticipationService
     proof_service: ProofService
     review_service: ReviewService
+    recognition_service: RecognitionService
 
 
 def setup_services() -> Services:
@@ -37,6 +39,7 @@ def setup_services() -> Services:
         load_database_settings(), LocalObjectStore(load_media_settings().root)
     )
     review_service = ReviewService(load_database_settings())
+    recognition_service = RecognitionService(load_database_settings())
 
     return Services(
         health_service=health_service,
@@ -47,4 +50,5 @@ def setup_services() -> Services:
         participation_service=participation_service,
         proof_service=proof_service,
         review_service=review_service,
+        recognition_service=recognition_service,
     )

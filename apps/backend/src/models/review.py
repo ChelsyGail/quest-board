@@ -56,3 +56,20 @@ class SubmissionDetailResourceData(BaseModel):
     type: Literal["submission-details"] = "submission-details"
     id: str
     attributes: SubmissionDetailAttributes
+
+
+class ReviewAttributes(BaseModel):
+    submission_id: str
+    participation_id: str
+    reviewer_id: str
+    decision: SubmissionStatus
+    feedback: str | None
+    reviewed_at: datetime
+    # Points the student earned with this decision; null for a rejection.
+    points_awarded: int | None = None
+
+
+class ReviewResourceData(BaseModel):
+    type: Literal["reviews"] = "reviews"
+    id: str
+    attributes: ReviewAttributes

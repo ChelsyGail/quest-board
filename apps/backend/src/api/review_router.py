@@ -11,17 +11,23 @@ from fastapi import status
 from models.catalogue import ItemResourceData
 from models.responses.review import QueueResponse
 from models.responses.review import ReviewErrorResponse
+from models.responses.review import ReviewResponse
 from models.responses.review import SubmissionDetailResponse
 from models.review import QueueEntryAttributes
 from models.review import QueueEntryResourceData
+from models.review import ReviewAttributes
+from models.review import ReviewResourceData
 from models.review import StudentSummary
 from models.review import SubmissionDetailAttributes
 from models.review import SubmissionDetailResourceData
 from models.users import UserRole
 from services.proof_service import SubmissionNotFoundError
+from services.review_service import NotAModeratorError
 from services.review_service import QueueEntry
 from services.review_service import QueuePage
+from services.review_service import ReviewRecord
 from services.review_service import SubmissionDetail
+from services.review_service import SubmissionNotPendingError
 from utilities.auth import build_current_user_dependency
 from utilities.auth import CurrentUser
 from utilities.auth import require_roles
@@ -29,6 +35,14 @@ from utilities.json_api_errors import json_api_error_response
 from utilities.services import Services
 
 logger = logging.getLogger(__name__)
+
+DECISION_ERROR_RESPONSES = {
+    401: {"model": ReviewErrorResponse},
+    403: {"model": ReviewErrorResponse},
+    404: {"model": ReviewErrorResponse},
+    409: {"model": ReviewErrorResponse},
+    422: {"model": ReviewErrorResponse},
+}
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
@@ -80,7 +94,66 @@ def setup_review_router(app: FastAPI, services: Services):
             return submission_not_found()
         return SubmissionDetailResponse(data=_to_detail(detail))
 
+    @router.post(
+        "/submissions/{submission_id}/approve",
+        response_model=ReviewResponse,
+        response_model_exclude_none=True,
+        status_code=status.HTTP_201_CREATED,
+        responses=DECISION_ERROR_RESPONSES,
+    )
+    def approve_submission(
+        submission_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(require_moderator),
+    ):
+        try:
+            record = services.review_service.approve(
+                submission_id, current_user.user_id
+            )
+        except SubmissionNotFoundError:
+            return submission_not_found()
+        except NotAModeratorError:
+            return _not_a_moderator()
+        except SubmissionNotPendingError:
+            return _not_pending()
+        return ReviewResponse(data=to_review_resource(record))
+
     app.include_router(router)
+
+
+def to_review_resource(record: ReviewRecord) -> ReviewResourceData:
+    return ReviewResourceData(
+        id=str(record.review_id),
+        attributes=ReviewAttributes(
+            submission_id=str(record.submission_id),
+            participation_id=str(record.participation_id),
+            reviewer_id=str(record.reviewer_id),
+            decision=record.decision,
+            feedback=record.feedback,
+            reviewed_at=record.reviewed_at,
+            points_awarded=record.points_awarded,
+        ),
+    )
+
+
+def _not_a_moderator():
+    return json_api_error_response(
+        ReviewErrorResponse,
+        status.HTTP_403_FORBIDDEN,
+        "not_a_moderator",
+        "Not a moderator",
+        "Only moderators can review submissions.",
+    )
+
+
+def _not_pending():
+    return json_api_error_response(
+        ReviewErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "submission_not_pending",
+        "Submission is not awaiting review",
+        "This attempt has already been decided or replaced by a newer one.",
+        "/submission_id",
+    )
 
 
 def _to_detail(detail: SubmissionDetail) -> SubmissionDetailResourceData:

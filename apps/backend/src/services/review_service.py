@@ -6,13 +6,18 @@ from datetime import datetime
 
 from database.connection import create_database_engine
 from models.catalogue import ParticipationStatus
+from models.proof import SubmissionStatus
+from models.users import UserRole
 from services.catalogue_service import from_utc_naive
 from services.catalogue_service import item_record_from_row
 from services.catalogue_service import ItemRecord
 from services.proof_service import load_submission
+from services.proof_service import SubmissionNotFoundError
 from services.proof_service import SubmissionRecord
+from services.recognition_service import award_points
 from sqlalchemy import text
 from utilities.settings import DatabaseSettings
+from utilities.transactions import with_deadlock_retry
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +34,26 @@ class QueueEntry:
     has_text: bool
     media_count: int
     submitted_at: datetime
+
+
+class NotAModeratorError(Exception):
+    """The reviewer lost the moderator role between sign-in and the decision."""
+
+
+class SubmissionNotPendingError(Exception):
+    """The attempt is not the one awaiting review: already decided, or replaced."""
+
+
+@dataclass(frozen=True)
+class ReviewRecord:
+    review_id: int
+    submission_id: int
+    participation_id: int
+    reviewer_id: int
+    decision: SubmissionStatus
+    feedback: str | None
+    reviewed_at: datetime
+    points_awarded: int | None = None
 
 
 @dataclass(frozen=True)
@@ -140,3 +165,147 @@ class ReviewService:
             item=item_record_from_row(item_row),
             student_name=student_name,
         )
+
+    def approve(self, submission_id: int, reviewer_id: int) -> ReviewRecord:
+        """BE-46: the review, the Approved status and the point award commit in
+        one transaction, so credit is never half-applied. Retried a bounded
+        number of times if InnoDB picks it as a deadlock victim."""
+        logger.info(
+            "Approving submission",
+            extra={"submission_id": submission_id, "reviewer_id": reviewer_id},
+        )
+        return with_deadlock_retry(
+            lambda: self._decide(submission_id, reviewer_id, SubmissionStatus.APPROVED)
+        )
+
+    def _decide(
+        self,
+        submission_id: int,
+        reviewer_id: int,
+        decision: SubmissionStatus,
+        feedback: str | None = None,
+    ) -> ReviewRecord:
+        with self.engine.begin() as connection:
+            participation = self._lock_attempt(connection, submission_id)
+            self._require_moderator(connection, reviewer_id)
+            if (
+                participation.status != ParticipationStatus.PENDING.value
+                or participation.current_submission_id != submission_id
+            ):
+                raise SubmissionNotPendingError
+
+            result = connection.execute(
+                text(
+                    """
+                    INSERT INTO reviews
+                        (submission_id, participation_id, reviewer_id, decision, feedback)
+                    VALUES
+                        (:submission_id, :participation_id, :reviewer_id, :decision,
+                         :feedback)
+                    """
+                ),
+                {
+                    "submission_id": submission_id,
+                    "participation_id": participation.participation_id,
+                    "reviewer_id": reviewer_id,
+                    "decision": decision.value,
+                    "feedback": feedback,
+                },
+            )
+            review_id = result.lastrowid
+            connection.execute(
+                text(
+                    "UPDATE participations SET status = :status "
+                    "WHERE participation_id = :participation_id"
+                ),
+                {
+                    "status": decision.value,
+                    "participation_id": participation.participation_id,
+                },
+            )
+            points_awarded = None
+            if decision == SubmissionStatus.APPROVED:
+                points_awarded = award_points(
+                    connection, participation.participation_id
+                ).points
+            row = connection.execute(
+                text("SELECT * FROM reviews WHERE review_id = :review_id"),
+                {"review_id": review_id},
+            ).one()
+
+        logger.info(
+            "Recorded review",
+            extra={
+                "review_id": review_id,
+                "submission_id": submission_id,
+                "decision": decision.value,
+            },
+        )
+        return _to_review(row, points_awarded)
+
+    @staticmethod
+    def _lock_attempt(connection, submission_id: int):
+        """Locks, in this order, the participation, the submission and the
+        student's user row. Every transaction that touches a student's
+        recognition takes the user row last (claims take only that one), so the
+        order is always the same and two reviews cannot deadlock each other."""
+        participation_id = connection.execute(
+            text(
+                "SELECT participation_id FROM submissions "
+                "WHERE submission_id = :submission_id"
+            ),
+            {"submission_id": submission_id},
+        ).scalar_one_or_none()
+        if participation_id is None:
+            raise SubmissionNotFoundError
+        participation = connection.execute(
+            text(
+                """
+                SELECT participation_id, user_id, item_id, status,
+                       current_submission_id
+                FROM participations
+                WHERE participation_id = :participation_id
+                FOR UPDATE
+                """
+            ),
+            {"participation_id": participation_id},
+        ).one()
+        connection.execute(
+            text(
+                "SELECT submission_id FROM submissions "
+                "WHERE submission_id = :submission_id FOR UPDATE"
+            ),
+            {"submission_id": submission_id},
+        )
+        connection.execute(
+            text("SELECT user_id FROM users WHERE user_id = :user_id FOR UPDATE"),
+            {"user_id": participation.user_id},
+        )
+        return participation
+
+    @staticmethod
+    def _require_moderator(connection, reviewer_id: int) -> None:
+        """The token was checked on the way in; this rechecks the role inside the
+        transaction, so a moderator removed a moment ago cannot still decide."""
+        roles = connection.execute(
+            text("SELECT roles FROM users WHERE user_id = :user_id"),
+            {"user_id": reviewer_id},
+        ).scalar_one_or_none()
+        if roles is None:
+            raise NotAModeratorError
+        granted = roles if isinstance(roles, (set, frozenset)) else roles.split(",")
+        if UserRole.MODERATOR.value not in granted:
+            raise NotAModeratorError
+
+
+def _to_review(row, points_awarded: int | None) -> ReviewRecord:
+    return ReviewRecord(
+        review_id=row.review_id,
+        submission_id=row.submission_id,
+        participation_id=row.participation_id,
+        reviewer_id=row.reviewer_id,
+        decision=SubmissionStatus(row.decision),
+        feedback=row.feedback,
+        reviewed_at=from_utc_naive(row.created_at),
+        points_awarded=points_awarded,
+    )

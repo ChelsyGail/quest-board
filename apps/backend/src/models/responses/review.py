@@ -1,5 +1,6 @@
 from models.responses.json_api import JsonApiResponse
 from models.review import QueueEntryResourceData
+from models.review import ReviewResourceData
 from models.review import SubmissionDetailResourceData
 
 
@@ -12,4 +13,8 @@ class ReviewErrorResponse(JsonApiResponse[QueueEntryResourceData]):
 
 
 class SubmissionDetailResponse(JsonApiResponse[SubmissionDetailResourceData]):
+    pass
+
+
+class ReviewResponse(JsonApiResponse[ReviewResourceData]):
     pass
