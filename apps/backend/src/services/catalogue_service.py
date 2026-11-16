@@ -63,6 +63,8 @@ class ItemRecord:
     category: str
     proof_instructions: str | None
     point_value: int | None
+    requires_text_proof: bool
+    requires_media_proof: bool
     status: ItemStatus
     published_at: datetime | None
     archived_at: datetime | None
@@ -111,7 +113,8 @@ class ParticipantRecord:
 SELECT_ITEM_COLUMNS = """
     SELECT item_id, owner_id, kind, title, description, location,
            starts_at, ends_at, time_zone, category,
-           proof_instructions, point_value, status,
+           proof_instructions, point_value,
+           requires_text_proof, requires_media_proof, status,
            published_at, archived_at, created_at, updated_at
     FROM catalogue_items
 """
@@ -137,6 +140,8 @@ UPDATABLE_FIELDS = (
     "category",
     "proof_instructions",
     "point_value",
+    "requires_text_proof",
+    "requires_media_proof",
 )
 
 
@@ -198,6 +203,8 @@ def item_record_from_row(row) -> ItemRecord:
         category=row.category,
         proof_instructions=row.proof_instructions,
         point_value=row.point_value,
+        requires_text_proof=bool(row.requires_text_proof),
+        requires_media_proof=bool(row.requires_media_proof),
         status=ItemStatus(row.status),
         published_at=from_utc_naive(row.published_at),
         archived_at=from_utc_naive(row.archived_at),
@@ -258,6 +265,8 @@ class CatalogueService:
             "category": item.category,
             "proof_instructions": getattr(item, "proof_instructions", None),
             "point_value": getattr(item, "point_value", None),
+            "requires_text_proof": getattr(item, "requires_text_proof", False),
+            "requires_media_proof": getattr(item, "requires_media_proof", False),
         }
         with self.engine.begin() as connection:
             result = connection.execute(
@@ -266,12 +275,14 @@ class CatalogueService:
                     INSERT INTO catalogue_items (
                         owner_id, kind, title, description, location,
                         starts_at, ends_at, time_zone, category,
-                        proof_instructions, point_value
+                        proof_instructions, point_value,
+                        requires_text_proof, requires_media_proof
                     )
                     VALUES (
                         :owner_id, :kind, :title, :description, :location,
                         :starts_at, :ends_at, :time_zone, :category,
-                        :proof_instructions, :point_value
+                        :proof_instructions, :point_value,
+                        :requires_text_proof, :requires_media_proof
                     )
                     """
                 ),

@@ -9,6 +9,7 @@ from fastapi import Query
 from fastapi import status
 from models.catalogue import EventCreate
 from models.catalogue import ItemAttributes
+from models.catalogue import ItemKind
 from models.catalogue import ItemResourceData
 from models.catalogue import ItemUpdate
 from models.catalogue import ParticipantAttributes
@@ -360,6 +361,12 @@ def to_item_attributes(record: ItemRecord) -> ItemAttributes:
         category=record.category,
         proof_instructions=record.proof_instructions,
         point_value=record.point_value,
+        requires_text_proof=(
+            record.requires_text_proof if record.kind == ItemKind.QUEST else None
+        ),
+        requires_media_proof=(
+            record.requires_media_proof if record.kind == ItemKind.QUEST else None
+        ),
         status=record.status,
         published_at=record.published_at,
         archived_at=record.archived_at,

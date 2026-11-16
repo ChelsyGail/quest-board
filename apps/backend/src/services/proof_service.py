@@ -38,6 +38,15 @@ class EmptySubmissionError(Exception):
     """An attempt needs at least some text or one file."""
 
 
+class MissingRequiredProofError(Exception):
+    """The quest asks for text and/or media that the attempt does not include.
+    `fields` names each missing part ("text", "media_ids")."""
+
+    def __init__(self, fields: list[str]):
+        super().__init__(fields)
+        self.fields = fields
+
+
 class UnsupportedMediaTypeError(Exception):
     pass
 
@@ -182,8 +191,7 @@ class ProofService:
             participation = self._lock_own_quest_participation(
                 connection, user_id, participation_id
             )
-            if submission.text is None and not submission.media_ids:
-                raise EmptySubmissionError
+            self._check_required_proof(participation, submission)
             self._lock_attachable_media(connection, user_id, submission.media_ids)
             attempt_number = self._next_attempt_number(connection, participation_id)
             result = connection.execute(
@@ -271,7 +279,8 @@ class ProofService:
         row = connection.execute(
             text(
                 """
-                SELECT p.participation_id, p.user_id, p.item_id, p.status, i.kind
+                SELECT p.participation_id, p.user_id, p.item_id, p.status, i.kind,
+                       i.requires_text_proof, i.requires_media_proof
                 FROM participations AS p
                 JOIN catalogue_items AS i ON i.item_id = p.item_id
                 WHERE p.participation_id = :participation_id
@@ -291,6 +300,21 @@ class ProofService:
         if row.kind != ItemKind.QUEST.value:
             raise ProofNotAcceptedError
         return row
+
+    @staticmethod
+    def _check_required_proof(participation, submission: SubmissionCreate) -> None:
+        """BE-38: refuse an attempt that lacks what the quest asks for, so
+        incomplete proof never reaches a moderator. With no explicit requirement,
+        at least some text or one file is still needed (BE-37)."""
+        missing = []
+        if participation.requires_text_proof and submission.text is None:
+            missing.append("text")
+        if participation.requires_media_proof and not submission.media_ids:
+            missing.append("media_ids")
+        if missing:
+            raise MissingRequiredProofError(missing)
+        if submission.text is None and not submission.media_ids:
+            raise EmptySubmissionError
 
     @staticmethod
     def _lock_attachable_media(connection, user_id: int, media_ids: list[int]) -> None:

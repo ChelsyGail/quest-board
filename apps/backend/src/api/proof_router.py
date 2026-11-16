@@ -8,12 +8,15 @@ from fastapi import Path
 from fastapi import Request
 from fastapi import status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from models.proof import MediaAttributes
 from models.proof import MediaResourceData
 from models.proof import SubmissionAttributes
 from models.proof import SubmissionCreate
 from models.proof import SubmissionMedia
 from models.proof import SubmissionResourceData
+from models.responses.json_api import JsonApiError
+from models.responses.json_api import JsonApiErrorSource
 from models.responses.proof import MediaErrorResponse
 from models.responses.proof import MediaResponse
 from models.responses.proof import SubmissionErrorResponse
@@ -25,6 +28,7 @@ from services.proof_service import MediaContentMismatchError
 from services.proof_service import MediaNotUsableError
 from services.proof_service import MediaRecord
 from services.proof_service import MediaTooLargeError
+from services.proof_service import MissingRequiredProofError
 from services.proof_service import NotYourParticipationError
 from services.proof_service import ParticipationNotFoundError
 from services.proof_service import ProofNotAcceptedError
@@ -126,6 +130,8 @@ def setup_proof_router(app: FastAPI, services: Services):
             return _not_your_participation()
         except ProofNotAcceptedError:
             return _proof_not_accepted()
+        except MissingRequiredProofError as error:
+            return _missing_required_proof(error.fields)
         except EmptySubmissionError:
             return _empty_submission()
         except MediaNotUsableError as error:
@@ -309,4 +315,30 @@ def _media_too_large(limit_bytes: int):
         "File too large",
         f"Files of this type can be at most {megabytes} MB.",
         "/size_bytes",
+    )
+
+
+REQUIRED_PROOF_MESSAGES = {
+    "text": "This quest needs a written description of what you did.",
+    "media_ids": "This quest needs at least one photo or video.",
+}
+
+
+def _missing_required_proof(fields: list[str]):
+    """One error per missing part, each pointing at the field to fill in."""
+    document = SubmissionErrorResponse(
+        errors=[
+            JsonApiError(
+                status="422",
+                code="required_proof_missing",
+                title="Required proof missing",
+                detail=REQUIRED_PROOF_MESSAGES[field],
+                source=JsonApiErrorSource(pointer=f"/{field}"),
+            )
+            for field in fields
+        ]
+    )
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=document.model_dump(mode="json", exclude_none=True),
     )

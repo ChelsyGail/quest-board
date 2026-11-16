@@ -1,5 +1,5 @@
 -- Photo and video proof (BE-37). The bytes live in private object storage under
--- object_key; this row is what the API knows about them. An upload starts
+-- object_key this row is what the API knows about them. An upload starts
 -- unattached (submission_id NULL) and is attached when the student submits.
 -- Uploads left unattached are cleaned up later (BE-43).
 CREATE TABLE submission_media (

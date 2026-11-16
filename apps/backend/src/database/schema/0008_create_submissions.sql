@@ -1,4 +1,4 @@
--- Proof submissions (BE-36). Each row is one attempt on one participation; a
+-- Proof submissions (BE-36). Each row is one attempt on one participation;
 -- rejected participation gets a new attempt rather than an edited one (BE-41),
 -- so attempt_number counts up per participation and old attempts are kept.
 CREATE TABLE submissions (
