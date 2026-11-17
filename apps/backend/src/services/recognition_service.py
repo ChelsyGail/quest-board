@@ -3,6 +3,9 @@
 The award functions take the caller's connection, because they run inside the
 approval transaction (BE-46): the review, the Approved status and the awards
 commit together or not at all.
+
+Points are never stored as a running total (BE-55). totalPoints is the sum of
+point_awards; availablePoints is that minus the debits in points_ledger.
 """
 from __future__ import annotations
 
@@ -31,6 +34,33 @@ class PointAwardRecord:
     item_id: int
     points: int
     awarded_at: datetime
+
+
+@dataclass(frozen=True)
+class PointBalance:
+    # Lifetime earned points (the UML /totalPoints). Claims never lower it.
+    total_points: int
+    # Earned minus committed debits: what is left to spend on rewards.
+    available_points: int
+
+
+def load_balance(connection, user_id: int) -> PointBalance:
+    """Both values from the database on the caller's connection. Inside the
+    claim transaction this runs after the per-user lock, so it is current."""
+    row = connection.execute(
+        text(
+            """
+            SELECT
+                (SELECT COALESCE(SUM(points), 0) FROM point_awards
+                 WHERE user_id = :user_id) AS earned,
+                (SELECT COALESCE(SUM(amount), 0) FROM points_ledger
+                 WHERE user_id = :user_id) AS spent
+            """
+        ),
+        {"user_id": user_id},
+    ).one()
+    earned = int(row.earned)
+    return PointBalance(total_points=earned, available_points=earned - int(row.spent))
 
 
 def award_points(connection, participation_id: int) -> PointAwardRecord:
@@ -102,6 +132,10 @@ def _to_point_award(row) -> PointAwardRecord:
 class RecognitionService:
     def __init__(self, settings: DatabaseSettings):
         self.engine = create_database_engine(settings)
+
+    def get_balance(self, user_id: int) -> PointBalance:
+        with self.engine.connect() as connection:
+            return load_balance(connection, user_id)
 
     def award_points_for(self, participation_id: int) -> PointAwardRecord:
         """award_points in a transaction of its own, for callers outside the
