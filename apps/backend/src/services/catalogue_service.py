@@ -182,6 +182,30 @@ def build_filter_clauses(filters: ItemFilters) -> tuple[str, dict]:
     return "".join(f"\n      AND {clause}" for clause in clauses), parameters
 
 
+def item_record_from_row(row) -> ItemRecord:
+    """Builds an ItemRecord from any row carrying the catalogue_items columns, so
+    joins in other components (BE-35) read items the same way the catalogue does."""
+    return ItemRecord(
+        item_id=row.item_id,
+        owner_id=row.owner_id,
+        kind=ItemKind(row.kind),
+        title=row.title,
+        description=row.description,
+        location=row.location,
+        starts_at=from_utc_naive(row.starts_at),
+        ends_at=from_utc_naive(row.ends_at),
+        time_zone=row.time_zone,
+        category=row.category,
+        proof_instructions=row.proof_instructions,
+        point_value=row.point_value,
+        status=ItemStatus(row.status),
+        published_at=from_utc_naive(row.published_at),
+        archived_at=from_utc_naive(row.archived_at),
+        created_at=from_utc_naive(row.created_at),
+        updated_at=from_utc_naive(row.updated_at),
+    )
+
+
 def day_start_utc(day: date) -> datetime:
     """Midnight UTC: the date filters work in whole UTC days (see README)."""
     return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
@@ -499,22 +523,4 @@ class CatalogueService:
 
     @staticmethod
     def _to_record(row) -> ItemRecord:
-        return ItemRecord(
-            item_id=row.item_id,
-            owner_id=row.owner_id,
-            kind=ItemKind(row.kind),
-            title=row.title,
-            description=row.description,
-            location=row.location,
-            starts_at=from_utc_naive(row.starts_at),
-            ends_at=from_utc_naive(row.ends_at),
-            time_zone=row.time_zone,
-            category=row.category,
-            proof_instructions=row.proof_instructions,
-            point_value=row.point_value,
-            status=ItemStatus(row.status),
-            published_at=from_utc_naive(row.published_at),
-            archived_at=from_utc_naive(row.archived_at),
-            created_at=from_utc_naive(row.created_at),
-            updated_at=from_utc_naive(row.updated_at),
-        )
+        return item_record_from_row(row)
