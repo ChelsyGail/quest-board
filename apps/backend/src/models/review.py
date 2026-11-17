@@ -72,6 +72,28 @@ class ReviewAttributes(BaseModel):
     points_awarded: int | None = None
 
 
+class AuditEntryAttributes(BaseModel):
+    """One moderation decision as the audit log keeps it (BE-52)."""
+
+    review_id: str
+    submission_id: str
+    participation_id: str
+    student_id: str
+    student_name: str
+    reviewer_id: str
+    reviewer_name: str
+    decision: SubmissionStatus
+    feedback: str | None
+    points_awarded: int | None = None
+    decided_at: datetime
+
+
+class AuditEntryResourceData(BaseModel):
+    type: Literal["moderation-audit-entries"] = "moderation-audit-entries"
+    id: str
+    attributes: AuditEntryAttributes
+
+
 class ReviewResourceData(BaseModel):
     type: Literal["reviews"] = "reviews"
     id: str

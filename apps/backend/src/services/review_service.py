@@ -11,6 +11,7 @@ from models.users import UserRole
 from services.catalogue_service import from_utc_naive
 from services.catalogue_service import item_record_from_row
 from services.catalogue_service import ItemRecord
+from services.moderation_audit_service import record_decision
 from services.proof_service import load_submission
 from services.proof_service import SubmissionNotFoundError
 from services.proof_service import SubmissionRecord
@@ -266,6 +267,9 @@ class ReviewService:
                     # unique_point_awards_participation: this completion was
                     # already credited, so this cannot be the first approval.
                     raise SubmissionAlreadyReviewedError from error
+            record_decision(
+                connection, review_id, participation.user_id, points_awarded
+            )
             row = connection.execute(
                 text("SELECT * FROM reviews WHERE review_id = :review_id"),
                 {"review_id": review_id},

@@ -10,10 +10,13 @@ from fastapi import Query
 from fastapi import Response
 from fastapi import status
 from models.catalogue import ItemResourceData
+from models.responses.review import AuditLogResponse
 from models.responses.review import QueueResponse
 from models.responses.review import ReviewErrorResponse
 from models.responses.review import ReviewResponse
 from models.responses.review import SubmissionDetailResponse
+from models.review import AuditEntryAttributes
+from models.review import AuditEntryResourceData
 from models.review import QueueEntryAttributes
 from models.review import QueueEntryResourceData
 from models.review import RejectionCreate
@@ -23,6 +26,9 @@ from models.review import StudentSummary
 from models.review import SubmissionDetailAttributes
 from models.review import SubmissionDetailResourceData
 from models.users import UserRole
+from services.moderation_audit_service import AuditEntry
+from services.moderation_audit_service import AuditFilters
+from services.moderation_audit_service import AuditPage
 from services.proof_service import SubmissionNotFoundError
 from services.review_service import NotAModeratorError
 from services.review_service import QueueEntry
@@ -56,6 +62,7 @@ def setup_review_router(app: FastAPI, services: Services):
     router = APIRouter(prefix="/moderation", tags=["moderation"])
     get_current_user = build_current_user_dependency(services.auth_service)
     require_moderator = require_roles(get_current_user, UserRole.MODERATOR)
+    require_admin = require_roles(get_current_user, UserRole.ADMIN)
 
     @router.get(
         "/submissions",
@@ -162,6 +169,40 @@ def setup_review_router(app: FastAPI, services: Services):
         except SubmissionNotPendingError:
             return _not_pending()
         return ReviewResponse(data=to_review_resource(record))
+
+    @router.get(
+        "/audit-log",
+        response_model=AuditLogResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": ReviewErrorResponse},
+            403: {"model": ReviewErrorResponse},
+            422: {"model": ReviewErrorResponse},
+        },
+    )
+    def list_audit_log(
+        submission_id: int | None = Query(None, gt=0),
+        reviewer_id: int | None = Query(None, gt=0),
+        student_id: int | None = Query(None, gt=0),
+        page: int = Query(1, ge=1, description="1-based page number"),
+        page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+        current_user: CurrentUser = Depends(require_admin),
+    ):
+        """BE-52: every moderation decision, newest first, for resolving
+        disputes. Admins only; filter by attempt, moderator or student."""
+        result = services.moderation_audit_service.list_entries(
+            AuditFilters(
+                submission_id=submission_id,
+                reviewer_id=reviewer_id,
+                student_id=student_id,
+            ),
+            page,
+            page_size,
+        )
+        return AuditLogResponse(
+            data=[_to_audit_entry(entry) for entry in result.entries],
+            meta={"page": _page_meta(result)},
+        )
 
     app.include_router(router)
 
@@ -275,7 +316,26 @@ def _to_queue_entry(entry: QueueEntry) -> QueueEntryResourceData:
     )
 
 
-def _page_meta(result: QueuePage) -> dict:
+def _to_audit_entry(entry: AuditEntry) -> AuditEntryResourceData:
+    return AuditEntryResourceData(
+        id=str(entry.audit_id),
+        attributes=AuditEntryAttributes(
+            review_id=str(entry.review_id),
+            submission_id=str(entry.submission_id),
+            participation_id=str(entry.participation_id),
+            student_id=str(entry.student_id),
+            student_name=entry.student_name,
+            reviewer_id=str(entry.reviewer_id),
+            reviewer_name=entry.reviewer_name,
+            decision=entry.decision,
+            feedback=entry.feedback,
+            points_awarded=entry.points_awarded,
+            decided_at=entry.decided_at,
+        ),
+    )
+
+
+def _page_meta(result: QueuePage | AuditPage) -> dict:
     return {
         "number": result.page_number,
         "size": result.page_size,
