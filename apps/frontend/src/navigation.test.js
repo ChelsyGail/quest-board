@@ -21,12 +21,12 @@ describe("Role-aware pages (FE-10)", () => {
   it.each([
     [[], ["account"]],
     [["student"], ["account"]],
-    [["student", "organizer"], ["account", "create-event"]],
+    [["student", "organizer"], ["account", "my-items", "create-event"]],
     [["student", "moderator"], ["account"]],
     [["admin"], ["account", "admin"]],
     [
       ["student", "organizer", "moderator", "admin"],
-      ["account", "create-event", "admin"],
+      ["account", "my-items", "create-event", "admin"],
     ],
   ])("roles %j see %j", (roles, expected) => {
     expect(pageIds(roles)).toEqual(expected);

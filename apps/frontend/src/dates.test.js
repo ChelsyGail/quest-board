@@ -31,8 +31,10 @@ describe("Item times in the item's own time zone (FE-12)", () => {
     expect(formatItemTime("2026-11-01T17:30:00Z", "Asia/Tokyo")).toBe("2 Nov 2026, 02:30");
   });
 
-  it("offers every known zone and keeps one that is missing from the list", () => {
+  it("offers every known zone plus UTC, and keeps one that is missing from the list", () => {
     expect(timeZoneOptions()).toContain("Europe/Paris");
-    expect(timeZoneOptions("Mars/Olympus")[0]).toBe("Mars/Olympus");
+    expect(timeZoneOptions()).toContain("UTC");
+    expect(timeZoneOptions("Etc/GMT+5")).toContain("Etc/GMT+5");
+    expect(timeZoneOptions("Etc/GMT+5")).toEqual([...timeZoneOptions("Etc/GMT+5")].sort());
   });
 });

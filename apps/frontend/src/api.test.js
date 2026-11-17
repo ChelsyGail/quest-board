@@ -6,11 +6,13 @@ import {
   createRoleRequest,
   formErrorsFrom,
   getCurrentUser,
+  listMyItems,
   listMyRoleRequests,
   listRoleRequests,
   registerUser,
   reviewRoleRequest,
   roleRequestsEnabled,
+  updateItem,
   updateUser,
 } from "./api.js";
 
@@ -332,5 +334,66 @@ describe("api client", () => {
     expect(catalogueEnabled()).toBe(true);
     vi.stubEnv("VITE_CATALOGUE_ENABLED", "");
     expect(catalogueEnabled()).toBe(false);
+  });
+
+  it("lists the organizer's items from GET /items/me", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(200, {
+        data: [
+          {
+            type: "catalogue-items",
+            id: "13",
+            attributes: {
+              kind: "quest",
+              title: "Campus photo hunt",
+              starts_at: "2026-11-05T09:00:00Z",
+              ends_at: "2026-11-05T17:00:00Z",
+              time_zone: "Europe/Paris",
+              proof_instructions: "Upload five photos.",
+              point_value: 50,
+              status: "published",
+            },
+          },
+        ],
+      })
+    );
+
+    const items = await listMyItems("org-tok");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/items/me");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: "13",
+      kind: "quest",
+      proofInstructions: "Upload five photos.",
+      pointValue: 50,
+    });
+  });
+
+  it("sends only the given changes in PATCH /items/{id}", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(200, {
+        data: {
+          type: "catalogue-items",
+          id: "12",
+          attributes: {
+            kind: "event",
+            title: "Chess night",
+            starts_at: "2026-11-01T17:30:00Z",
+            ends_at: "2026-11-01T20:00:00Z",
+            time_zone: "Europe/Paris",
+            status: "draft",
+          },
+        },
+      })
+    );
+
+    const updated = await updateItem("12", { title: "Chess night" }, "org-tok");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://api.test/items/12");
+    expect(options.method).toBe("PATCH");
+    expect(JSON.parse(options.body)).toEqual({ title: "Chess night" });
+    expect(updated.title).toBe("Chess night");
   });
 });

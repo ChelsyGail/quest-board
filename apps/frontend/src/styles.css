@@ -271,6 +271,16 @@ textarea {
   border-radius: 999px;
 }
 
+.status-draft {
+  color: var(--muted);
+  background: var(--bg);
+}
+
+.status-published {
+  color: var(--success);
+  background: #e6f4ea;
+}
+
 .status-pending {
   color: #8a5a00;
   background: #fff4db;
@@ -329,6 +339,12 @@ textarea {
   color: var(--accent);
   background: #fff;
   border: 1px solid var(--border);
+}
+
+.button-secondary.button-block {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
 }
 
 .button-secondary:hover {

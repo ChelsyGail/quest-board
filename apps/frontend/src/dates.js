@@ -7,11 +7,15 @@ export function browserTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-// Every zone the browser knows, with `include` added if it is missing from the list.
+// Every zone the browser knows, plus UTC (which browsers leave out of the list) and
+// `include` if it is missing.
 export function timeZoneOptions(include) {
-  const zones =
-    typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
-  return include && !zones.includes(include) ? [include, ...zones] : zones;
+  const zones = new Set(
+    typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : []
+  );
+  zones.add("UTC");
+  if (include) zones.add(include);
+  return [...zones].sort();
 }
 
 // How far `timeZone` is ahead of UTC at the instant `time` (milliseconds since the epoch).

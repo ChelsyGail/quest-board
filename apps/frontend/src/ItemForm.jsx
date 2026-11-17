@@ -4,8 +4,16 @@ import {
   ITEM_DESCRIPTION_MAX_LENGTH,
   ITEM_LOCATION_MAX_LENGTH,
   ITEM_TITLE_MAX_LENGTH,
+  POINT_VALUE_MAX,
+  POINT_VALUE_MIN,
+  PROOF_INSTRUCTIONS_MAX_LENGTH,
 } from "./api.js";
-import { browserTimeZone, timeZoneOptions, zonedInputToIso } from "./dates.js";
+import {
+  browserTimeZone,
+  isoToZonedInput,
+  timeZoneOptions,
+  zonedInputToIso,
+} from "./dates.js";
 
 // The form's fields use the backend's names, so the backend's field errors (which point
 // at those names) show next to the right input.
@@ -18,6 +26,13 @@ export const ITEM_FIELDS = [
   "ends_at",
   "time_zone",
 ];
+
+// Fields only quests have.
+export const QUEST_FIELDS = ["proof_instructions", "point_value"];
+
+export function itemFields(kind) {
+  return kind === "quest" ? [...ITEM_FIELDS, ...QUEST_FIELDS] : ITEM_FIELDS;
+}
 
 const TEXT_LIMITS = {
   title: ["Title", ITEM_TITLE_MAX_LENGTH],
@@ -38,9 +53,28 @@ export function emptyItemValues() {
   };
 }
 
-// The request body for these form values: trimmed text and UTC times.
-export function itemPayload(values) {
-  return {
+// Form values for an existing item, with its times shown in its own zone.
+export function itemFormValues(item) {
+  const values = {
+    title: item.title,
+    description: item.description,
+    location: item.location,
+    category: item.category,
+    starts_at: isoToZonedInput(item.startsAt, item.timeZone),
+    ends_at: isoToZonedInput(item.endsAt, item.timeZone),
+    time_zone: item.timeZone,
+  };
+  if (item.kind === "quest") {
+    values.proof_instructions = item.proofInstructions;
+    values.point_value = item.pointValue === null ? "" : String(item.pointValue);
+  }
+  return values;
+}
+
+// The request body for these form values: trimmed text and UTC times, plus the quest
+// fields for a quest.
+export function itemPayload(values, kind = "event") {
+  const payload = {
     title: values.title.trim(),
     description: values.description.trim(),
     location: values.location.trim(),
@@ -49,10 +83,15 @@ export function itemPayload(values) {
     ends_at: zonedInputToIso(values.ends_at, values.time_zone),
     time_zone: values.time_zone,
   };
+  if (kind === "quest") {
+    payload.proof_instructions = values.proof_instructions.trim();
+    payload.point_value = Number(values.point_value);
+  }
+  return payload;
 }
 
 // The same checks as the backend, so most mistakes are caught before sending.
-function validate(values) {
+function validate(values, kind) {
   const errors = {};
   for (const [field, [label, maxLength]] of Object.entries(TEXT_LIMITS)) {
     const value = values[field].trim();
@@ -72,13 +111,33 @@ function validate(values) {
     errors.ends_at = "End time must be after the start time.";
   }
   if (!values.time_zone) errors.time_zone = "Time zone is required.";
+
+  if (kind === "quest") {
+    const proof = values.proof_instructions.trim();
+    if (!proof) {
+      errors.proof_instructions = "Proof instructions are required.";
+    } else if (proof.length > PROOF_INSTRUCTIONS_MAX_LENGTH) {
+      errors.proof_instructions =
+        `Proof instructions must be at most ${PROOF_INSTRUCTIONS_MAX_LENGTH} characters.`;
+    }
+    const points = Number(values.point_value);
+    if (
+      !/^\d+$/.test(values.point_value.trim()) ||
+      points < POINT_VALUE_MIN ||
+      points > POINT_VALUE_MAX
+    ) {
+      errors.point_value =
+        `Points must be a whole number from ${POINT_VALUE_MIN} to ${POINT_VALUE_MAX}.`;
+    }
+  }
   return errors;
 }
 
-// Form for an event's details. It keeps what was typed; the parent sends the request
+// Form for an event's or quest's details; `kind` "quest" adds the quest-only fields. It keeps what was typed; the parent sends the request
 // and passes back `serverErrors` (by field) and `formError`. Remount it with a new `key`
 // to clear it.
 function ItemForm({
+  kind = "event",
   initialValues,
   submitLabel,
   submittingLabel,
@@ -86,6 +145,7 @@ function ItemForm({
   serverErrors = {},
   formError = "",
   onSubmit,
+  onCancel,
 }) {
   const [values, setValues] = useState(initialValues);
   const [errors, setErrors] = useState({});
@@ -100,7 +160,7 @@ function ItemForm({
     event.preventDefault();
     if (isSubmitting) return;
 
-    const found = validate(values);
+    const found = validate(values, kind);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
     onSubmit(values);
@@ -177,9 +237,43 @@ function ItemForm({
         {errorFor("time_zone")}
       </div>
 
+      {kind === "quest" && (
+        <>
+          <div className="field">
+            <label htmlFor="item-proof_instructions">Proof instructions</label>
+            <textarea rows="3" {...inputProps("proof_instructions")} />
+            <p className="hint">What students must submit to show they completed the quest.</p>
+            {errorFor("proof_instructions")}
+          </div>
+
+          <div className="field">
+            <label htmlFor="item-point_value">Points</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={POINT_VALUE_MIN}
+              max={POINT_VALUE_MAX}
+              step="1"
+              {...inputProps("point_value")}
+            />
+            {errorFor("point_value")}
+          </div>
+        </>
+      )}
+
       <button type="submit" className="button" disabled={isSubmitting}>
         {isSubmitting ? submittingLabel : submitLabel}
       </button>
+      {onCancel && (
+        <button
+          type="button"
+          className="button button-secondary button-block"
+          onClick={onCancel}
+          disabled={isSubmitting}
+        >
+          Cancel
+        </button>
+      )}
       <p className="form-error" role="alert">
         {formError}
       </p>
