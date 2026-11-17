@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { EMAIL_PATTERN, login } from "./api.js";
+import { EMAIL_PATTERN, EMAIL_PLACEHOLDER, login } from "./api.js";
 
 function Login({ initialEmail, onAuthenticated, onShowSignup }) {
   const [email, setEmail] = useState(initialEmail || "");
@@ -51,7 +51,7 @@ function Login({ initialEmail, onAuthenticated, onShowSignup }) {
           <input
             type="email"
             id="email"
-            placeholder="you@aup.edu"
+            placeholder={EMAIL_PLACEHOLDER}
             autoComplete="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}

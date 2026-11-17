@@ -116,13 +116,16 @@ SELECT_ITEM_COLUMNS = """
     FROM catalogue_items
 """
 
-# Published, not archived and not yet over. Matches index_catalogue_items_visible
+# What a student may see at all. Matches index_catalogue_items_visible
 # (status, archived_at, starts_at) so the list stays an index range scan (BE-26).
-VISIBLE_UPCOMING_FILTER = """
+VISIBLE_FILTER = """
     WHERE status = :status
       AND archived_at IS NULL
-      AND ends_at > :now
 """
+
+# The catalogue (BE-19) also drops anything that is already over. The calendar
+# (BE-23) deliberately does not, so a month view keeps its earlier days.
+VISIBLE_UPCOMING_FILTER = f"{VISIBLE_FILTER}      AND ends_at > :now\n"
 
 UPDATABLE_FIELDS = (
     "title",
@@ -177,6 +180,30 @@ def build_filter_clauses(filters: ItemFilters) -> tuple[str, dict]:
         parameters["window_end"] = to_utc_naive(filters.window_end)
 
     return "".join(f"\n      AND {clause}" for clause in clauses), parameters
+
+
+def item_record_from_row(row) -> ItemRecord:
+    """Builds an ItemRecord from any row carrying the catalogue_items columns, so
+    joins in other components (BE-35) read items the same way the catalogue does."""
+    return ItemRecord(
+        item_id=row.item_id,
+        owner_id=row.owner_id,
+        kind=ItemKind(row.kind),
+        title=row.title,
+        description=row.description,
+        location=row.location,
+        starts_at=from_utc_naive(row.starts_at),
+        ends_at=from_utc_naive(row.ends_at),
+        time_zone=row.time_zone,
+        category=row.category,
+        proof_instructions=row.proof_instructions,
+        point_value=row.point_value,
+        status=ItemStatus(row.status),
+        published_at=from_utc_naive(row.published_at),
+        archived_at=from_utc_naive(row.archived_at),
+        created_at=from_utc_naive(row.created_at),
+        updated_at=from_utc_naive(row.updated_at),
+    )
 
 
 def day_start_utc(day: date) -> datetime:
@@ -329,6 +356,36 @@ class CatalogueService:
             total_items=total_items,
         )
 
+    def list_calendar_items(
+        self, window_start: datetime, window_end: datetime
+    ) -> list[ItemRecord]:
+        """Every published, unarchived item overlapping the window, soonest first.
+
+        Two differences from the catalogue (BE-19): items that have already
+        finished are kept, so the earlier days of a month view are not blank, and
+        the result is never paged, so no page limit can hide a day (BE-23). The
+        router bounds the window instead.
+        """
+        narrowing, narrowing_parameters = build_filter_clauses(
+            ItemFilters(window_start=window_start, window_end=window_end)
+        )
+        parameters = {
+            "status": ItemStatus.PUBLISHED.value,
+            **narrowing_parameters,
+        }
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"""
+                    {SELECT_ITEM_COLUMNS}
+                    {VISIBLE_FILTER}{narrowing}
+                    ORDER BY starts_at, item_id
+                    """
+                ),
+                parameters,
+            ).all()
+        return [self._to_record(row) for row in rows]
+
     def update_item(
         self, item_id: int, actor_id: int, update: ItemUpdate
     ) -> ItemRecord:
@@ -466,22 +523,4 @@ class CatalogueService:
 
     @staticmethod
     def _to_record(row) -> ItemRecord:
-        return ItemRecord(
-            item_id=row.item_id,
-            owner_id=row.owner_id,
-            kind=ItemKind(row.kind),
-            title=row.title,
-            description=row.description,
-            location=row.location,
-            starts_at=from_utc_naive(row.starts_at),
-            ends_at=from_utc_naive(row.ends_at),
-            time_zone=row.time_zone,
-            category=row.category,
-            proof_instructions=row.proof_instructions,
-            point_value=row.point_value,
-            status=ItemStatus(row.status),
-            published_at=from_utc_naive(row.published_at),
-            archived_at=from_utc_naive(row.archived_at),
-            created_at=from_utc_naive(row.created_at),
-            updated_at=from_utc_naive(row.updated_at),
-        )
+        return item_record_from_row(row)
