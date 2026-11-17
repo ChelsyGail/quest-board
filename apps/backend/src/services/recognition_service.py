@@ -51,6 +51,15 @@ class BadgeAwardRecord:
 
 
 @dataclass(frozen=True)
+class CompletedQuestRecord:
+    item_id: int
+    title: str
+    category: str
+    points: int
+    approved_at: datetime
+
+
+@dataclass(frozen=True)
 class PointBalance:
     # Lifetime earned points (the UML /totalPoints). Claims never lower it.
     total_points: int
@@ -75,6 +84,13 @@ def load_balance(connection, user_id: int) -> PointBalance:
     ).one()
     earned = int(row.earned)
     return PointBalance(total_points=earned, available_points=earned - int(row.spent))
+
+
+@dataclass(frozen=True)
+class Achievements:
+    balance: PointBalance
+    badges: list[BadgeAwardRecord]
+    completed_quests: list[CompletedQuestRecord]
 
 
 def award_points(connection, participation_id: int) -> PointAwardRecord:
@@ -242,6 +258,53 @@ class RecognitionService:
     def get_balance(self, user_id: int) -> PointBalance:
         with self.engine.connect() as connection:
             return load_balance(connection, user_id)
+
+    def get_achievements(self, user_id: int) -> Achievements:
+        """BE-57: points, badges and approved quests for one student. One
+        connection, so all three come from the same snapshot."""
+        with self.engine.connect() as connection:
+            balance = load_balance(connection, user_id)
+            badge_rows = connection.execute(
+                text(
+                    """
+                    SELECT a.badge_award_id, a.badge_id, a.user_id, a.created_at,
+                           b.name, b.description
+                    FROM badge_awards AS a
+                    JOIN badges AS b ON b.badge_id = a.badge_id
+                    WHERE a.user_id = :user_id
+                    ORDER BY a.created_at, a.badge_id
+                    """
+                ),
+                {"user_id": user_id},
+            ).all()
+            # Every approved participation has exactly one point award
+            # (BE-54), so the awards are the list of completed quests.
+            quest_rows = connection.execute(
+                text(
+                    """
+                    SELECT pa.item_id, pa.points, pa.created_at, i.title, i.category
+                    FROM point_awards AS pa
+                    JOIN catalogue_items AS i ON i.item_id = pa.item_id
+                    WHERE pa.user_id = :user_id
+                    ORDER BY pa.created_at DESC, pa.point_award_id DESC
+                    """
+                ),
+                {"user_id": user_id},
+            ).all()
+        return Achievements(
+            balance=balance,
+            badges=[to_badge_award(row) for row in badge_rows],
+            completed_quests=[
+                CompletedQuestRecord(
+                    item_id=row.item_id,
+                    title=row.title,
+                    category=row.category,
+                    points=row.points,
+                    approved_at=from_utc_naive(row.created_at),
+                )
+                for row in quest_rows
+            ],
+        )
 
     def award_points_for(self, participation_id: int) -> PointAwardRecord:
         """award_points in a transaction of its own, for callers outside the

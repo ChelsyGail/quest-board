@@ -36,3 +36,29 @@ class PointsResourceData(BaseModel):
     type: Literal["points"] = "points"
     id: str
     attributes: PointsAttributes
+
+
+class CompletedQuest(BaseModel):
+    item_id: str
+    title: str
+    category: str
+    # The amount awarded when the approval committed (a snapshot, BE-54).
+    points: int
+    approved_at: datetime
+
+
+class AchievementsAttributes(BaseModel):
+    """BE-57: everything the achievements screen shows, for the signed-in
+    student. Points come from awards and debits, never from the client."""
+
+    total_points: int
+    available_points: int
+    badges: list[BadgeSummary]
+    # Newest approval first.
+    completed_quests: list[CompletedQuest]
+
+
+class AchievementsResourceData(BaseModel):
+    type: Literal["achievements"] = "achievements"
+    id: str
+    attributes: AchievementsAttributes

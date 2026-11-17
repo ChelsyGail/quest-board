@@ -2,6 +2,7 @@ import logging
 
 from api.catalogue_router import to_item_attributes
 from api.proof_router import to_submission_media
+from api.recognition_router import to_badge_summary
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import FastAPI
@@ -10,7 +11,6 @@ from fastapi import Query
 from fastapi import Response
 from fastapi import status
 from models.catalogue import ItemResourceData
-from models.recognition import BadgeSummary
 from models.responses.review import AuditLogResponse
 from models.responses.review import QueueResponse
 from models.responses.review import ReviewErrorResponse
@@ -219,15 +219,7 @@ def to_review_resource(record: ReviewRecord) -> ReviewResourceData:
             feedback=record.feedback,
             reviewed_at=record.reviewed_at,
             points_awarded=record.points_awarded,
-            badges_awarded=[
-                BadgeSummary(
-                    badge_id=str(badge.badge_id),
-                    name=badge.name,
-                    description=badge.description,
-                    awarded_at=badge.awarded_at,
-                )
-                for badge in record.badges_awarded
-            ],
+            badges_awarded=[to_badge_summary(badge) for badge in record.badges_awarded],
         ),
     )
 
