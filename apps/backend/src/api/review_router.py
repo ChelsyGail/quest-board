@@ -28,6 +28,7 @@ from services.review_service import QueueEntry
 from services.review_service import QueuePage
 from services.review_service import ReviewRecord
 from services.review_service import SelfReviewError
+from services.review_service import SubmissionAlreadyReviewedError
 from services.review_service import SubmissionDetail
 from services.review_service import SubmissionNotPendingError
 from utilities.auth import build_current_user_dependency
@@ -117,6 +118,8 @@ def setup_review_router(app: FastAPI, services: Services):
             return _not_a_moderator()
         except SelfReviewError:
             return _self_review()
+        except SubmissionAlreadyReviewedError:
+            return _already_reviewed()
         except SubmissionNotPendingError:
             return _not_pending()
         return ReviewResponse(data=to_review_resource(record))
@@ -143,6 +146,8 @@ def setup_review_router(app: FastAPI, services: Services):
             return _not_a_moderator()
         except SelfReviewError:
             return _self_review()
+        except SubmissionAlreadyReviewedError:
+            return _already_reviewed()
         except SubmissionNotPendingError:
             return _not_pending()
         return ReviewResponse(data=to_review_resource(record))
@@ -182,6 +187,17 @@ def _self_review():
         "self_review",
         "Cannot review your own submission",
         "Another moderator has to review an attempt you submitted.",
+        "/submission_id",
+    )
+
+
+def _already_reviewed():
+    return json_api_error_response(
+        ReviewErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "submission_already_reviewed",
+        "Submission already reviewed",
+        "This attempt already has its final review and cannot be decided again.",
         "/submission_id",
     )
 

@@ -16,6 +16,7 @@ from services.proof_service import SubmissionNotFoundError
 from services.proof_service import SubmissionRecord
 from services.recognition_service import award_points
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from utilities.settings import DatabaseSettings
 from utilities.transactions import with_deadlock_retry
 
@@ -46,6 +47,10 @@ class SelfReviewError(Exception):
 
 class SubmissionNotPendingError(Exception):
     """The attempt is not the one awaiting review: already decided, or replaced."""
+
+
+class SubmissionAlreadyReviewedError(Exception):
+    """The attempt already has its one final review (BE-49)."""
 
 
 @dataclass(frozen=True)
@@ -214,31 +219,22 @@ class ReviewService:
                     extra={"submission_id": submission_id, "reviewer_id": reviewer_id},
                 )
                 raise SelfReviewError
+            if self._find_review(connection, submission_id) is not None:
+                raise SubmissionAlreadyReviewedError
             if (
                 participation.status != ParticipationStatus.PENDING.value
                 or participation.current_submission_id != submission_id
             ):
                 raise SubmissionNotPendingError
 
-            result = connection.execute(
-                text(
-                    """
-                    INSERT INTO reviews
-                        (submission_id, participation_id, reviewer_id, decision, feedback)
-                    VALUES
-                        (:submission_id, :participation_id, :reviewer_id, :decision,
-                         :feedback)
-                    """
-                ),
-                {
-                    "submission_id": submission_id,
-                    "participation_id": participation.participation_id,
-                    "reviewer_id": reviewer_id,
-                    "decision": decision.value,
-                    "feedback": feedback,
-                },
+            review_id = self._insert_review(
+                connection,
+                submission_id,
+                participation.participation_id,
+                reviewer_id,
+                decision,
+                feedback,
             )
-            review_id = result.lastrowid
             connection.execute(
                 text(
                     "UPDATE participations SET status = :status "
@@ -268,6 +264,53 @@ class ReviewService:
             },
         )
         return _to_review(row, points_awarded)
+
+    @staticmethod
+    def _find_review(connection, submission_id: int):
+        return connection.execute(
+            text("SELECT * FROM reviews WHERE submission_id = :submission_id"),
+            {"submission_id": submission_id},
+        ).one_or_none()
+
+    @staticmethod
+    def _insert_review(
+        connection,
+        submission_id: int,
+        participation_id: int,
+        reviewer_id: int,
+        decision: SubmissionStatus,
+        feedback: str | None,
+    ) -> int:
+        """unique_reviews_submission (BE-49) is the final guard: if a second
+        review slips past the checks above, the insert fails and the whole
+        decision rolls back."""
+        try:
+            result = connection.execute(
+                text(
+                    """
+                    INSERT INTO reviews
+                        (submission_id, participation_id, reviewer_id, decision,
+                         feedback)
+                    VALUES
+                        (:submission_id, :participation_id, :reviewer_id, :decision,
+                         :feedback)
+                    """
+                ),
+                {
+                    "submission_id": submission_id,
+                    "participation_id": participation_id,
+                    "reviewer_id": reviewer_id,
+                    "decision": decision.value,
+                    "feedback": feedback,
+                },
+            )
+        except IntegrityError as error:
+            logger.warning(
+                "Second review refused by the database",
+                extra={"submission_id": submission_id, "reviewer_id": reviewer_id},
+            )
+            raise SubmissionAlreadyReviewedError from error
+        return result.lastrowid
 
     @staticmethod
     def _lock_attempt(connection, submission_id: int):
