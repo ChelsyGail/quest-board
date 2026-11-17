@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  catalogueEnabled,
   getCurrentUser,
   listMyRoleRequests,
   listRoleRequests,
@@ -15,6 +16,7 @@ vi.mock("./api.js", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
+    catalogueEnabled: vi.fn(),
     getCurrentUser: vi.fn(),
     listMyRoleRequests: vi.fn(),
     listRoleRequests: vi.fn(),
@@ -45,6 +47,7 @@ beforeEach(() => {
   sessionStorage.clear();
   getCurrentUser.mockResolvedValue(USER);
   roleRequestsEnabled.mockReturnValue(false);
+  catalogueEnabled.mockReturnValue(false);
   listMyRoleRequests.mockResolvedValue([]);
   listRoleRequests.mockResolvedValue([]);
 });
@@ -335,5 +338,36 @@ describe("Role-aware navigation (FE-10)", () => {
     expect(container.querySelector(".card")).not.toHaveClass("card-wide");
     await user.click(adminTab);
     expect(container.querySelector(".card")).toHaveClass("card-wide");
+  });
+});
+
+describe("Organizer pages (FE-12)", () => {
+  const ORGANIZER = { ...USER, roles: ["student", "organizer"] };
+
+  it("gives organizers a Create event tab with the event form", async () => {
+    const user = userEvent.setup();
+    catalogueEnabled.mockReturnValue(true);
+    getCurrentUser.mockResolvedValue(ORGANIZER);
+    storeSession();
+    const { container } = render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Create event" }));
+
+    expect(screen.getByRole("heading", { name: "Create an event" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save event" })).toBeInTheDocument();
+    expect(container.querySelector(".card")).toHaveClass("card-wide");
+  });
+
+  it.each([
+    ["a student", USER, true],
+    ["an organizer on a backend without the catalogue", ORGANIZER, false],
+  ])("doesn't offer event creation to %s", async (_, profile, enabled) => {
+    catalogueEnabled.mockReturnValue(enabled);
+    getCurrentUser.mockResolvedValue(profile);
+    storeSession();
+    render(<App />);
+
+    await screen.findByLabelText("Name");
+    expect(screen.queryByRole("button", { name: "Create event" })).not.toBeInTheDocument();
   });
 });

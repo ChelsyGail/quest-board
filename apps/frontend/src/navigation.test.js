@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { roleRequestsEnabled } from "./api.js";
+import { catalogueEnabled, roleRequestsEnabled } from "./api.js";
 import { pagesFor, resolvePage } from "./navigation.js";
 
 vi.mock("./api.js", async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, roleRequestsEnabled: vi.fn() };
+  return { ...actual, catalogueEnabled: vi.fn(), roleRequestsEnabled: vi.fn() };
 });
 
 function pageIds(roles) {
@@ -13,6 +13,7 @@ function pageIds(roles) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  catalogueEnabled.mockReturnValue(true);
   roleRequestsEnabled.mockReturnValue(true);
 });
 
@@ -20,17 +21,21 @@ describe("Role-aware pages (FE-10)", () => {
   it.each([
     [[], ["account"]],
     [["student"], ["account"]],
-    [["student", "organizer"], ["account"]],
+    [["student", "organizer"], ["account", "create-event"]],
     [["student", "moderator"], ["account"]],
     [["admin"], ["account", "admin"]],
-    [["student", "organizer", "moderator", "admin"], ["account", "admin"]],
+    [
+      ["student", "organizer", "moderator", "admin"],
+      ["account", "create-event", "admin"],
+    ],
   ])("roles %j see %j", (roles, expected) => {
     expect(pageIds(roles)).toEqual(expected);
   });
 
   it("hides a page the backend doesn't support, even for a role that may see it", () => {
     roleRequestsEnabled.mockReturnValue(false);
-    expect(pageIds(["admin"])).toEqual(["account"]);
+    catalogueEnabled.mockReturnValue(false);
+    expect(pageIds(["admin", "organizer"])).toEqual(["account"]);
   });
 
   it("ignores roles it doesn't know", () => {
@@ -40,6 +45,7 @@ describe("Role-aware pages (FE-10)", () => {
   it("resolves a page the user may not see to the default page", () => {
     const pages = pagesFor(["student"]);
     expect(resolvePage(pages, "admin").id).toBe("account");
+    expect(resolvePage(pages, "create-event").id).toBe("account");
     expect(resolvePage(pagesFor(["admin"]), "admin").id).toBe("admin");
   });
 });

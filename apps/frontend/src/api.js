@@ -10,12 +10,22 @@ export const PASSWORD_MIN_LENGTH = 12;
 export const PASSWORD_MAX_LENGTH = 128;
 export const REASON_MAX_LENGTH = 500;
 
+export const ITEM_TITLE_MAX_LENGTH = 200;
+export const ITEM_DESCRIPTION_MAX_LENGTH = 5000;
+export const ITEM_LOCATION_MAX_LENGTH = 255;
+export const ITEM_CATEGORY_MAX_LENGTH = 64;
+
 export const REQUESTABLE_ROLES = ["organizer", "moderator"];
 export const ROLE_REQUEST_STATUSES = ["pending", "approved", "rejected"];
 
 // Read on every call so tests can change it.
 export function roleRequestsEnabled() {
   return import.meta.env.VITE_ROLE_REQUESTS_ENABLED === "true";
+}
+
+// Read on every call so tests can change it.
+export function catalogueEnabled() {
+  return import.meta.env.VITE_CATALOGUE_ENABLED === "true";
 }
 
 // Error thrown for every failed request.
@@ -272,4 +282,45 @@ export async function reviewRoleRequest(requestId, decision, token) {
   }
   const path = `/role-requests/${encodeURIComponent(requestId)}/${decision}`;
   return readRoleRequest(await request(path, { method: "POST", token }));
+}
+
+// Reads a JSON:API "catalogue-items" resource (an event or a quest). Times are UTC
+// ISO strings; `timeZone` is the IANA zone the item takes place in.
+function readItem(resource) {
+  const attributes = resource.attributes || {};
+  if (
+    typeof resource.id !== "string" ||
+    !attributes.kind ||
+    typeof attributes.title !== "string" ||
+    Number.isNaN(Date.parse(attributes.starts_at)) ||
+    Number.isNaN(Date.parse(attributes.ends_at)) ||
+    !attributes.time_zone
+  ) {
+    throw new ApiError("The server returned an incomplete item.", 200);
+  }
+  return {
+    id: resource.id,
+    kind: attributes.kind,
+    ownerId: attributes.owner_id,
+    title: attributes.title,
+    description: attributes.description || "",
+    location: attributes.location || "",
+    startsAt: attributes.starts_at,
+    endsAt: attributes.ends_at,
+    timeZone: attributes.time_zone,
+    category: attributes.category || "",
+    proofInstructions: attributes.proof_instructions || "",
+    pointValue: attributes.point_value ?? null,
+    status: attributes.status,
+    publishedAt: attributes.published_at || "",
+    createdAt: attributes.created_at || "",
+    updatedAt: attributes.updated_at || "",
+  };
+}
+
+// POST /events (organizers only) -> the new event, saved as a draft.
+// `event` uses the backend's field names: title, description, location, starts_at,
+// ends_at, time_zone and category.
+export async function createEvent(event, token) {
+  return readItem(await request("/events", { method: "POST", body: event, token }));
 }
