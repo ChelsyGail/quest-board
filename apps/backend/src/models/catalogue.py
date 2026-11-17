@@ -46,6 +46,13 @@ class ItemStatus(StrEnum):
     PUBLISHED = "published"
 
 
+class ParticipationStatus(StrEnum):
+    JOINED = "joined"
+    PENDING = "pending"
+    REJECTED = "rejected"
+    APPROVED = "approved"
+
+
 @lru_cache(maxsize=1)
 def _known_time_zones() -> frozenset[str]:
     return frozenset(available_timezones())
@@ -150,3 +157,16 @@ class ItemResourceData(BaseModel):
     type: Literal["catalogue-items"] = "catalogue-items"
     id: str
     attributes: ItemAttributes
+
+
+class ParticipantAttributes(BaseModel):
+    user_id: str
+    name: str
+    status: ParticipationStatus
+    joined_at: datetime
+
+
+class ParticipantResourceData(BaseModel):
+    type: Literal["participants"] = "participants"
+    id: str
+    attributes: ParticipantAttributes
