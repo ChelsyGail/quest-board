@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from database.connection import create_database_engine
+from models.recognition import RuleType
 from services.catalogue_service import from_utc_naive
+from services.recognition_rules import evaluate
+from services.recognition_rules import load_stats
+from services.recognition_rules import Rule
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from utilities.settings import DatabaseSettings
@@ -33,6 +37,16 @@ class PointAwardRecord:
     user_id: int
     item_id: int
     points: int
+    awarded_at: datetime
+
+
+@dataclass(frozen=True)
+class BadgeAwardRecord:
+    badge_award_id: int
+    badge_id: int
+    user_id: int
+    name: str
+    description: str
     awarded_at: datetime
 
 
@@ -116,6 +130,98 @@ def award_points(connection, participation_id: int) -> PointAwardRecord:
         },
     )
     return _to_point_award(row)
+
+
+def award_earned_badges(
+    connection, user_id: int, participation_id: int
+) -> list[BadgeAwardRecord]:
+    """BE-56: awards every badge the student now meets and does not have yet.
+
+    Runs inside the approval transaction, after award_points, so the new award
+    counts. That transaction holds the student's users-row lock, so no other
+    approval for the same student can check the same badges at the same time.
+    unique_badge_awards_user_badge stays as the final guard.
+    """
+    candidates = connection.execute(
+        text(
+            """
+            SELECT b.badge_id, b.rule_type, b.rule_threshold, b.rule_category
+            FROM badges AS b
+            WHERE NOT EXISTS (
+                SELECT 1 FROM badge_awards AS a
+                WHERE a.badge_id = b.badge_id AND a.user_id = :user_id
+            )
+            ORDER BY b.badge_id
+            """
+        ),
+        {"user_id": user_id},
+    ).all()
+    if not candidates:
+        return []
+
+    stats = load_stats(connection, user_id)
+    earned_ids = [
+        badge.badge_id for badge in candidates if evaluate(badge_rule(badge), stats).met
+    ]
+    for badge_id in earned_ids:
+        connection.execute(
+            text(
+                """
+                INSERT INTO badge_awards (user_id, badge_id, participation_id)
+                VALUES (:user_id, :badge_id, :participation_id)
+                """
+            ),
+            {
+                "user_id": user_id,
+                "badge_id": badge_id,
+                "participation_id": participation_id,
+            },
+        )
+    if earned_ids:
+        logger.info(
+            "Awarded badges",
+            extra={"user_id": user_id, "badge_ids": earned_ids},
+        )
+    return load_badges_for_participation(connection, participation_id)
+
+
+def load_badges_for_participation(
+    connection, participation_id: int
+) -> list[BadgeAwardRecord]:
+    """The badges a given approval earned (also used to answer a retry)."""
+    rows = connection.execute(
+        text(
+            """
+            SELECT a.badge_award_id, a.badge_id, a.user_id, a.created_at,
+                   b.name, b.description
+            FROM badge_awards AS a
+            JOIN badges AS b ON b.badge_id = a.badge_id
+            WHERE a.participation_id = :participation_id
+            ORDER BY a.badge_id
+            """
+        ),
+        {"participation_id": participation_id},
+    ).all()
+    return [to_badge_award(row) for row in rows]
+
+
+def badge_rule(row) -> Rule:
+    return Rule(
+        type=RuleType(row.rule_type),
+        threshold=row.rule_threshold,
+        category=row.rule_category,
+    )
+
+
+def to_badge_award(row) -> BadgeAwardRecord:
+    return BadgeAwardRecord(
+        badge_award_id=row.badge_award_id,
+        badge_id=row.badge_id,
+        user_id=row.user_id,
+        name=row.name,
+        description=row.description,
+        awarded_at=from_utc_naive(row.created_at),
+    )
 
 
 def _to_point_award(row) -> PointAwardRecord:

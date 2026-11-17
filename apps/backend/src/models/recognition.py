@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+from datetime import datetime
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel
+
+
+class RuleType(StrEnum):
+    """What a badge's criteria (BE-56) counts."""
+
+    APPROVED_QUESTS = "approved_quests"
+    TOTAL_POINTS = "total_points"
+    CATEGORY_QUESTS = "category_quests"
+
+
+class BadgeSummary(BaseModel):
+    badge_id: str
+    name: str
+    description: str
+    awarded_at: datetime
 
 
 class PointsAttributes(BaseModel):

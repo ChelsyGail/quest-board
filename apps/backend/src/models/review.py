@@ -7,6 +7,7 @@ from typing import Literal
 from models.catalogue import ItemResourceData
 from models.proof import SubmissionMedia
 from models.proof import SubmissionStatus
+from models.recognition import BadgeSummary
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import StringConstraints
@@ -70,6 +71,8 @@ class ReviewAttributes(BaseModel):
     reviewed_at: datetime
     # Points the student earned with this decision; null for a rejection.
     points_awarded: int | None = None
+    # Badges the student earned with this decision (BE-56).
+    badges_awarded: list[BadgeSummary] = []
 
 
 class AuditEntryAttributes(BaseModel):

@@ -15,8 +15,11 @@ from services.moderation_audit_service import record_decision
 from services.proof_service import load_submission
 from services.proof_service import SubmissionNotFoundError
 from services.proof_service import SubmissionRecord
+from services.recognition_service import award_earned_badges
 from services.recognition_service import award_points
+from services.recognition_service import BadgeAwardRecord
 from services.recognition_service import DuplicateAwardError
+from services.recognition_service import load_badges_for_participation
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from utilities.settings import DatabaseSettings
@@ -66,6 +69,8 @@ class ReviewRecord:
     feedback: str | None
     reviewed_at: datetime
     points_awarded: int | None = None
+    # Badges this approval earned (BE-56); empty for a rejection.
+    badges_awarded: tuple[BadgeAwardRecord, ...] = ()
     # True when a retried approval returned the review it already made (BE-50).
     replayed: bool = False
 
@@ -258,6 +263,7 @@ class ReviewService:
                 },
             )
             points_awarded = None
+            badges_awarded: list[BadgeAwardRecord] = []
             if decision == SubmissionStatus.APPROVED:
                 try:
                     points_awarded = award_points(
@@ -267,6 +273,9 @@ class ReviewService:
                     # unique_point_awards_participation: this completion was
                     # already credited, so this cannot be the first approval.
                     raise SubmissionAlreadyReviewedError from error
+                badges_awarded = award_earned_badges(
+                    connection, participation.user_id, participation.participation_id
+                )
             record_decision(
                 connection, review_id, participation.user_id, points_awarded
             )
@@ -283,7 +292,7 @@ class ReviewService:
                 "decision": decision.value,
             },
         )
-        return _to_review(row, points_awarded)
+        return _to_review(row, points_awarded, badges_awarded)
 
     @staticmethod
     def _replay(connection, existing) -> ReviewRecord:
@@ -297,6 +306,7 @@ class ReviewService:
             ),
             {"participation_id": existing.participation_id},
         ).scalar_one_or_none()
+        badges = load_badges_for_participation(connection, existing.participation_id)
         logger.info(
             "Approval retry answered with the existing review",
             extra={
@@ -304,7 +314,7 @@ class ReviewService:
                 "submission_id": existing.submission_id,
             },
         )
-        return _to_review(existing, points, replayed=True)
+        return _to_review(existing, points, badges, replayed=True)
 
     @staticmethod
     def _find_review(connection, submission_id: int):
@@ -418,7 +428,12 @@ def _is_retry(existing, reviewer_id: int, decision: SubmissionStatus) -> bool:
     )
 
 
-def _to_review(row, points_awarded: int | None, replayed: bool = False) -> ReviewRecord:
+def _to_review(
+    row,
+    points_awarded: int | None,
+    badges_awarded: list[BadgeAwardRecord] | None = None,
+    replayed: bool = False,
+) -> ReviewRecord:
     return ReviewRecord(
         review_id=row.review_id,
         submission_id=row.submission_id,
@@ -428,5 +443,6 @@ def _to_review(row, points_awarded: int | None, replayed: bool = False) -> Revie
         feedback=row.feedback,
         reviewed_at=from_utc_naive(row.created_at),
         points_awarded=points_awarded,
+        badges_awarded=tuple(badges_awarded or ()),
         replayed=replayed,
     )
