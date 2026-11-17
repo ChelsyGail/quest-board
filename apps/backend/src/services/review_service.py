@@ -15,9 +15,11 @@ from services.proof_service import load_submission
 from services.proof_service import SubmissionNotFoundError
 from services.proof_service import SubmissionRecord
 from services.recognition_service import award_points
+from services.recognition_service import DuplicateAwardError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from utilities.settings import DatabaseSettings
+from utilities.transactions import begin_read_committed
 from utilities.transactions import with_deadlock_retry
 
 logger = logging.getLogger(__name__)
@@ -212,7 +214,11 @@ class ReviewService:
         decision: SubmissionStatus,
         feedback: str | None = None,
     ) -> ReviewRecord:
-        with self.engine.begin() as connection:
+        # BE-51: two moderators deciding the same attempt at once queue on the
+        # participation lock. READ COMMITTED makes the one that waited see the
+        # other's committed review, so it gets 409 (or, for the same moderator's
+        # retried approval, the existing result) and only one review is written.
+        with begin_read_committed(self.engine) as connection:
             participation = self._lock_attempt(connection, submission_id)
             self._require_moderator(connection, reviewer_id)
             if participation.user_id == reviewer_id:
@@ -252,9 +258,14 @@ class ReviewService:
             )
             points_awarded = None
             if decision == SubmissionStatus.APPROVED:
-                points_awarded = award_points(
-                    connection, participation.participation_id
-                ).points
+                try:
+                    points_awarded = award_points(
+                        connection, participation.participation_id
+                    ).points
+                except DuplicateAwardError as error:
+                    # unique_point_awards_participation: this completion was
+                    # already credited, so this cannot be the first approval.
+                    raise SubmissionAlreadyReviewedError from error
             row = connection.execute(
                 text("SELECT * FROM reviews WHERE review_id = :review_id"),
                 {"review_id": review_id},
