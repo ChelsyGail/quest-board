@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date
 from datetime import datetime
 from datetime import timezone
 
@@ -10,11 +11,42 @@ from models.catalogue import EventCreate
 from models.catalogue import ItemCreate
 from models.catalogue import ItemKind
 from models.catalogue import ItemStatus
+from models.catalogue import ItemUpdate
+from models.catalogue import ParticipationStatus
+from models.catalogue import QUEST_ONLY_FIELDS
 from models.catalogue import QuestCreate
 from sqlalchemy import text
 from utilities.settings import DatabaseSettings
 
 logger = logging.getLogger(__name__)
+
+
+class ItemNotFoundError(Exception):
+    pass
+
+
+class ItemOwnershipError(Exception):
+    """The caller is not the organizer who owns the item."""
+
+
+class ItemAlreadyPublishedError(Exception):
+    pass
+
+
+class ItemArchivedError(Exception):
+    pass
+
+
+class InvalidTimeWindowError(Exception):
+    """After the update, ends_at would not be after starts_at."""
+
+
+class QuestOnlyFieldError(Exception):
+    """A quest-only field was sent for an event."""
+
+    def __init__(self, fields: list[str]):
+        super().__init__(fields)
+        self.fields = fields
 
 
 @dataclass(frozen=True)
@@ -37,6 +69,44 @@ class ItemRecord:
     created_at: datetime
     updated_at: datetime
 
+    @property
+    def is_visible(self) -> bool:
+        return self.status == ItemStatus.PUBLISHED and self.archived_at is None
+
+
+@dataclass(frozen=True)
+class ItemPage:
+    """One page of the public catalogue plus the totals the client needs to page."""
+
+    items: list[ItemRecord]
+    page_number: int
+    page_size: int
+    total_items: int
+
+    @property
+    def total_pages(self) -> int:
+        return -(-self.total_items // self.page_size)
+
+
+@dataclass(frozen=True)
+class ItemFilters:
+    """Optional narrowing a student applies on top of the visible catalogue."""
+
+    keyword: str | None = None
+    category: str | None = None
+    # The window the student is free in; an item is kept when it overlaps it.
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ParticipantRecord:
+    participation_id: int
+    user_id: int
+    name: str
+    status: ParticipationStatus
+    joined_at: datetime
+
 
 SELECT_ITEM_COLUMNS = """
     SELECT item_id, owner_id, kind, title, description, location,
@@ -45,6 +115,107 @@ SELECT_ITEM_COLUMNS = """
            published_at, archived_at, created_at, updated_at
     FROM catalogue_items
 """
+
+# What a student may see at all. Matches index_catalogue_items_visible
+# (status, archived_at, starts_at) so the list stays an index range scan (BE-26).
+VISIBLE_FILTER = """
+    WHERE status = :status
+      AND archived_at IS NULL
+"""
+
+# The catalogue (BE-19) also drops anything that is already over. The calendar
+# (BE-23) deliberately does not, so a month view keeps its earlier days.
+VISIBLE_UPCOMING_FILTER = f"{VISIBLE_FILTER}      AND ends_at > :now\n"
+
+UPDATABLE_FIELDS = (
+    "title",
+    "description",
+    "location",
+    "starts_at",
+    "ends_at",
+    "time_zone",
+    "category",
+    "proof_instructions",
+    "point_value",
+)
+
+
+def escape_like_pattern(value: str) -> str:
+    """Keeps % and _ typed by a student as plain characters instead of wildcards.
+
+    Backslash is MySQL's default LIKE escape character, so it is escaped first:
+    a literal backslash in the search term then still matches itself.
+    """
+    for character in ("\\", "%", "_"):
+        value = value.replace(character, f"\\{character}")
+    return value
+
+
+def build_filter_clauses(filters: ItemFilters) -> tuple[str, dict]:
+    """Extra WHERE clauses and parameters for the student's filters."""
+    clauses: list[str] = []
+    parameters: dict = {}
+
+    if filters.keyword:
+        # title and description are utf8mb4_0900_ai_ci, so the match ignores case
+        # and accents: a search for "degres" finds "Rue des Degrés".
+        clauses.append("(title LIKE :keyword OR description LIKE :keyword)")
+        parameters["keyword"] = f"%{escape_like_pattern(filters.keyword)}%"
+
+    if filters.category:
+        # One exact category, matched case-insensitively by the same collation
+        # ("Social" finds items filed as "social").
+        clauses.append("category = :category")
+        parameters["category"] = filters.category
+
+    # BE-22: overlap, not containment. An item counts when it is still running
+    # at the start of the window and has already started by the end of it, so a
+    # three-day trip shows up on every day it covers.
+    if filters.window_start:
+        clauses.append("ends_at >= :window_start")
+        parameters["window_start"] = to_utc_naive(filters.window_start)
+
+    if filters.window_end:
+        clauses.append("starts_at <= :window_end")
+        parameters["window_end"] = to_utc_naive(filters.window_end)
+
+    return "".join(f"\n      AND {clause}" for clause in clauses), parameters
+
+
+def item_record_from_row(row) -> ItemRecord:
+    """Builds an ItemRecord from any row carrying the catalogue_items columns, so
+    joins in other components (BE-35) read items the same way the catalogue does."""
+    return ItemRecord(
+        item_id=row.item_id,
+        owner_id=row.owner_id,
+        kind=ItemKind(row.kind),
+        title=row.title,
+        description=row.description,
+        location=row.location,
+        starts_at=from_utc_naive(row.starts_at),
+        ends_at=from_utc_naive(row.ends_at),
+        time_zone=row.time_zone,
+        category=row.category,
+        proof_instructions=row.proof_instructions,
+        point_value=row.point_value,
+        status=ItemStatus(row.status),
+        published_at=from_utc_naive(row.published_at),
+        archived_at=from_utc_naive(row.archived_at),
+        created_at=from_utc_naive(row.created_at),
+        updated_at=from_utc_naive(row.updated_at),
+    )
+
+
+def day_start_utc(day: date) -> datetime:
+    """Midnight UTC: the date filters work in whole UTC days (see README)."""
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+
+def day_end_utc(day: date) -> datetime:
+    """The last microsecond of the day, so `to` includes everything on that date."""
+    return datetime(
+        day.year, day.month, day.day, 23, 59, 59, 999999, tzinfo=timezone.utc
+    )
 
 
 def to_utc_naive(value: datetime) -> datetime:
@@ -114,6 +285,235 @@ class CatalogueService:
         )
         return self._to_record(row)
 
+    def get_item(self, item_id: int, viewer_id: int) -> ItemRecord:
+        """Owners see their own drafts; everyone else only sees published, unarchived items."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(f"{SELECT_ITEM_COLUMNS} WHERE item_id = :item_id"),
+                {"item_id": item_id},
+            ).one_or_none()
+        if row is None:
+            raise ItemNotFoundError
+        record = self._to_record(row)
+        if record.owner_id != viewer_id and not record.is_visible:
+            raise ItemNotFoundError
+        return record
+
+    def list_my_items(self, owner_id: int) -> list[ItemRecord]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"""
+                    {SELECT_ITEM_COLUMNS}
+                    WHERE owner_id = :owner_id AND archived_at IS NULL
+                    ORDER BY starts_at, item_id
+                    """
+                ),
+                {"owner_id": owner_id},
+            ).all()
+        return [self._to_record(row) for row in rows]
+
+    def list_published_items(
+        self,
+        page_number: int,
+        page_size: int,
+        filters: ItemFilters | None = None,
+        now: datetime | None = None,
+    ) -> ItemPage:
+        """Students' catalogue: published, unarchived items that have not ended yet,
+        soonest first, narrowed by the student's filters. Ties on starts_at are
+        broken by item_id so pages never overlap or skip rows."""
+        narrowing, narrowing_parameters = build_filter_clauses(filters or ItemFilters())
+        where = f"{VISIBLE_UPCOMING_FILTER}{narrowing}"
+        parameters = {
+            "status": ItemStatus.PUBLISHED.value,
+            "now": to_utc_naive(now or datetime.now(timezone.utc)),
+            "limit": page_size,
+            "offset": (page_number - 1) * page_size,
+            **narrowing_parameters,
+        }
+        with self.engine.connect() as connection:
+            total_items = connection.execute(
+                text(f"SELECT COUNT(*) FROM catalogue_items {where}"),
+                parameters,
+            ).scalar_one()
+            rows = connection.execute(
+                text(
+                    f"""
+                    {SELECT_ITEM_COLUMNS}
+                    {where}
+                    ORDER BY starts_at, item_id
+                    LIMIT :limit OFFSET :offset
+                    """
+                ),
+                parameters,
+            ).all()
+
+        return ItemPage(
+            items=[self._to_record(row) for row in rows],
+            page_number=page_number,
+            page_size=page_size,
+            total_items=total_items,
+        )
+
+    def list_calendar_items(
+        self, window_start: datetime, window_end: datetime
+    ) -> list[ItemRecord]:
+        """Every published, unarchived item overlapping the window, soonest first.
+
+        Two differences from the catalogue (BE-19): items that have already
+        finished are kept, so the earlier days of a month view are not blank, and
+        the result is never paged, so no page limit can hide a day (BE-23). The
+        router bounds the window instead.
+        """
+        narrowing, narrowing_parameters = build_filter_clauses(
+            ItemFilters(window_start=window_start, window_end=window_end)
+        )
+        parameters = {
+            "status": ItemStatus.PUBLISHED.value,
+            **narrowing_parameters,
+        }
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"""
+                    {SELECT_ITEM_COLUMNS}
+                    {VISIBLE_FILTER}{narrowing}
+                    ORDER BY starts_at, item_id
+                    """
+                ),
+                parameters,
+            ).all()
+        return [self._to_record(row) for row in rows]
+
+    def update_item(
+        self, item_id: int, actor_id: int, update: ItemUpdate
+    ) -> ItemRecord:
+        changes = update.model_dump(exclude_unset=True)
+        for field in ("starts_at", "ends_at"):
+            if field in changes:
+                changes[field] = to_utc_naive(changes[field])
+
+        logger.info(
+            "Updating catalogue item",
+            extra={"item_id": item_id, "actor_id": actor_id, "fields": sorted(changes)},
+        )
+        with self.engine.begin() as connection:
+            current = self._to_record(
+                self._lock_owned_item(connection, item_id, actor_id)
+            )
+
+            if current.kind == ItemKind.EVENT:
+                rejected = sorted(QUEST_ONLY_FIELDS.intersection(changes))
+                if rejected:
+                    raise QuestOnlyFieldError(rejected)
+
+            # Both ends of the window must stay consistent when only one is changed.
+            starts_at = changes.get("starts_at", to_utc_naive(current.starts_at))
+            ends_at = changes.get("ends_at", to_utc_naive(current.ends_at))
+            if ends_at <= starts_at:
+                raise InvalidTimeWindowError
+
+            assignments = [
+                f"{field} = :{field}" for field in UPDATABLE_FIELDS if field in changes
+            ]
+            assignments.append("updated_at = CURRENT_TIMESTAMP(6)")
+            connection.execute(
+                text(
+                    f"""
+                    UPDATE catalogue_items
+                    SET {", ".join(assignments)}
+                    WHERE item_id = :item_id
+                    """
+                ),
+                {**changes, "item_id": item_id},
+            )
+            row = self._load_item(connection, item_id)
+
+        logger.info("Updated catalogue item", extra={"item_id": item_id})
+        return self._to_record(row)
+
+    def publish_item(self, item_id: int, actor_id: int) -> ItemRecord:
+        logger.info(
+            "Publishing catalogue item",
+            extra={"item_id": item_id, "actor_id": actor_id},
+        )
+        with self.engine.begin() as connection:
+            row = self._lock_owned_item(connection, item_id, actor_id)
+            if row.status == ItemStatus.PUBLISHED:
+                raise ItemAlreadyPublishedError
+
+            connection.execute(
+                text(
+                    """
+                    UPDATE catalogue_items
+                    SET status = :status,
+                        published_at = CURRENT_TIMESTAMP(6),
+                        updated_at = CURRENT_TIMESTAMP(6)
+                    WHERE item_id = :item_id
+                    """
+                ),
+                {"status": ItemStatus.PUBLISHED.value, "item_id": item_id},
+            )
+            row = self._load_item(connection, item_id)
+
+        logger.info("Published catalogue item", extra={"item_id": item_id})
+        return self._to_record(row)
+
+    def list_participants(self, item_id: int, actor_id: int) -> list[ParticipantRecord]:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT owner_id FROM catalogue_items WHERE item_id = :item_id"),
+                {"item_id": item_id},
+            ).one_or_none()
+            if row is None:
+                raise ItemNotFoundError
+            if row.owner_id != actor_id:
+                raise ItemOwnershipError
+
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT p.participation_id, p.user_id, u.name, p.status, p.created_at
+                    FROM participations AS p
+                    JOIN users AS u ON u.user_id = p.user_id
+                    WHERE p.item_id = :item_id AND u.deleted_at IS NULL
+                    ORDER BY p.created_at, p.participation_id
+                    """
+                ),
+                {"item_id": item_id},
+            ).all()
+
+        return [
+            ParticipantRecord(
+                participation_id=r.participation_id,
+                user_id=r.user_id,
+                name=r.name,
+                status=ParticipationStatus(r.status),
+                joined_at=from_utc_naive(r.created_at),
+            )
+            for r in rows
+        ]
+
+    @staticmethod
+    def _lock_owned_item(connection, item_id: int, actor_id: int):
+        """Loads an item for change, enforcing existence, ownership and archive state."""
+        row = connection.execute(
+            text(f"{SELECT_ITEM_COLUMNS} WHERE item_id = :item_id FOR UPDATE"),
+            {"item_id": item_id},
+        ).one_or_none()
+        if row is None:
+            raise ItemNotFoundError
+        if row.owner_id != actor_id:
+            logger.warning(
+                "Rejected change to another organizer's item",
+                extra={"item_id": item_id, "actor_id": actor_id},
+            )
+            raise ItemOwnershipError
+        if row.archived_at is not None:
+            raise ItemArchivedError
+        return row
+
     @staticmethod
     def _load_item(connection, item_id: int):
         return connection.execute(
@@ -123,22 +523,4 @@ class CatalogueService:
 
     @staticmethod
     def _to_record(row) -> ItemRecord:
-        return ItemRecord(
-            item_id=row.item_id,
-            owner_id=row.owner_id,
-            kind=ItemKind(row.kind),
-            title=row.title,
-            description=row.description,
-            location=row.location,
-            starts_at=from_utc_naive(row.starts_at),
-            ends_at=from_utc_naive(row.ends_at),
-            time_zone=row.time_zone,
-            category=row.category,
-            proof_instructions=row.proof_instructions,
-            point_value=row.point_value,
-            status=ItemStatus(row.status),
-            published_at=from_utc_naive(row.published_at),
-            archived_at=from_utc_naive(row.archived_at),
-            created_at=row.created_at,
-            updated_at=row.updated_at,
-        )
+        return item_record_from_row(row)
