@@ -33,6 +33,8 @@ ProofInstructions = Annotated[
 PointValue = Annotated[int, Field(ge=1, le=10000)]
 TimeZoneName = Annotated[str, StringConstraints(min_length=1, max_length=64)]
 
+QUEST_ONLY_FIELDS = frozenset({"proof_instructions", "point_value"})
+
 
 class ItemKind(StrEnum):
     EVENT = "event"
@@ -42,6 +44,13 @@ class ItemKind(StrEnum):
 class ItemStatus(StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"
+
+
+class ParticipationStatus(StrEnum):
+    JOINED = "joined"
+    PENDING = "pending"
+    REJECTED = "rejected"
+    APPROVED = "approved"
 
 
 @lru_cache(maxsize=1)
@@ -84,9 +93,45 @@ class ItemCreate(BaseModel):
         return self
 
 
+class EventCreate(ItemCreate):
+    pass
+
+
 class QuestCreate(ItemCreate):
     proof_instructions: ProofInstructions
     point_value: PointValue
+
+
+class ItemUpdate(BaseModel):
+    """Partial update; quest-only fields are rejected on events by the service."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: ItemTitle | None = None
+    description: ItemDescription | None = None
+    location: ItemLocation | None = None
+    starts_at: AwareDatetime | None = None
+    ends_at: AwareDatetime | None = None
+    time_zone: TimeZoneName | None = None
+    category: ItemCategory | None = None
+    proof_instructions: ProofInstructions | None = None
+    point_value: PointValue | None = None
+
+    @field_validator("time_zone")
+    @classmethod
+    def require_known_time_zone(cls, time_zone: str | None) -> str | None:
+        if time_zone is None:
+            return None
+        return _validate_time_zone(time_zone)
+
+    @model_validator(mode="after")
+    def require_change(self) -> ItemUpdate:
+        if not self.model_fields_set:
+            raise ValueError("At least one item field must be provided")
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Item fields cannot be null")
+        _validate_time_window(self.starts_at, self.ends_at)
+        return self
 
 
 class ItemAttributes(BaseModel):
@@ -112,3 +157,16 @@ class ItemResourceData(BaseModel):
     type: Literal["catalogue-items"] = "catalogue-items"
     id: str
     attributes: ItemAttributes
+
+
+class ParticipantAttributes(BaseModel):
+    user_id: str
+    name: str
+    status: ParticipationStatus
+    joined_at: datetime
+
+
+class ParticipantResourceData(BaseModel):
+    type: Literal["participants"] = "participants"
+    id: str
+    attributes: ParticipantAttributes
