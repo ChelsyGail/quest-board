@@ -34,6 +34,12 @@ function renderProfile({ session = SESSION, profile = PROFILE } = {}) {
 const save = (user) => user.click(screen.getByRole("button", { name: "Save changes" }));
 const form = () => screen.getByRole("button", { name: "Save changes" }).closest("form");
 
+async function changeEmail(user, value = "ada@example.com") {
+  const email = screen.getByLabelText(/Email/);
+  await user.clear(email);
+  await user.type(email, value);
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   roleRequestsEnabled.mockReturnValue(false);
@@ -63,23 +69,24 @@ describe("Profile details (QB-47)", () => {
 
   it("explains when the backend has no /users/me and sends only entered fields", async () => {
     const user = userEvent.setup();
-    updateUser.mockResolvedValue({ ...PROFILE, name: "Ada L." });
+    updateUser.mockResolvedValue({ ...PROFILE, email: "ada@example.com" });
     const props = renderProfile({ profile: null });
 
     expect(screen.getByText(/the server doesn't support it yet/)).toBeInTheDocument();
     expect(screen.queryByText(/Signed in as/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("New name")).toHaveValue("");
+    expect(screen.queryByLabelText(/name/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("New email")).toHaveValue("");
 
     await save(user);
-    expect(within(form()).getByRole("alert")).toHaveTextContent(
-      "Enter a new name, email, or password."
-    );
+    expect(within(form()).getByRole("alert")).toHaveTextContent("Enter a new email or password.");
     expect(updateUser).not.toHaveBeenCalled();
 
-    await user.type(screen.getByLabelText("New name"), "Ada L.");
+    await user.type(screen.getByLabelText("New email"), "ada@example.com");
     await save(user);
 
-    await waitFor(() => expect(updateUser).toHaveBeenCalledWith("7", { name: "Ada L." }, "tok"));
+    await waitFor(() =>
+      expect(updateUser).toHaveBeenCalledWith("7", { email: "ada@example.com" }, "tok")
+    );
     expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
     expect(props.onProfileUpdated).not.toHaveBeenCalled();
   });
@@ -97,6 +104,57 @@ describe("Profile details (QB-47)", () => {
 
     expect(await screen.findByText("You haven't requested extra access yet.")).toBeInTheDocument();
     expect(listMyRoleRequests).toHaveBeenCalledWith("tok");
+  });
+});
+
+describe("Username can't be changed (QB-169)", () => {
+  it("shows the name read-only and explains it can't be changed", async () => {
+    const user = userEvent.setup();
+    renderProfile();
+
+    const name = screen.getByLabelText("Name");
+    expect(name).toHaveValue("Ada");
+    expect(name).toHaveAttribute("readonly");
+    expect(name).toHaveAccessibleDescription(
+      "Your name is your QuestBoard username and can't be changed."
+    );
+    await user.type(name, " L.");
+    expect(name).toHaveValue("Ada");
+  });
+
+  it("never sends the name in a profile update", async () => {
+    const user = userEvent.setup();
+    updateUser.mockResolvedValue({ ...PROFILE, email: "ada@example.com" });
+    renderProfile();
+
+    await changeEmail(user);
+    await user.type(screen.getByLabelText("New password"), NEW_PASSWORD);
+    await user.type(screen.getByLabelText("Confirm new password"), NEW_PASSWORD);
+    await save(user);
+
+    await waitFor(() => expect(updateUser).toHaveBeenCalledTimes(1));
+    expect(updateUser.mock.calls[0][1]).toEqual({
+      email: "ada@example.com",
+      password: NEW_PASSWORD,
+    });
+    expect(updateUser.mock.calls[0][1]).not.toHaveProperty("name");
+  });
+
+  it("shows a backend error about the name as a form message", async () => {
+    const user = userEvent.setup();
+    updateUser.mockRejectedValue(
+      new ApiError("Name: Extra inputs are not permitted", 422, {
+        name: "Extra inputs are not permitted",
+      })
+    );
+    renderProfile();
+
+    await changeEmail(user);
+    await save(user);
+
+    expect(await within(form()).findByRole("alert")).toHaveTextContent(
+      "Name: Extra inputs are not permitted"
+    );
   });
 });
 
@@ -131,17 +189,31 @@ describe("Saving changes (QB-47)", () => {
     expect(updateUser).not.toHaveBeenCalled();
   });
 
-  it("requires a name and email when the profile is loaded", async () => {
+  it("requires an email when the profile is loaded", async () => {
     const user = userEvent.setup();
     renderProfile();
 
-    await user.clear(screen.getByLabelText("Name"));
     await user.clear(screen.getByLabelText("Email"));
     await save(user);
 
-    expect(screen.getByText("Name cannot be empty.")).toBeInTheDocument();
     expect(screen.getByText("Email cannot be empty.")).toBeInTheDocument();
     expect(updateUser).not.toHaveBeenCalled();
+  });
+
+  it("accepts a personal email as well as a school email (QB-168)", async () => {
+    const user = userEvent.setup();
+    updateUser.mockResolvedValue({ ...PROFILE, email: "ada.lovelace@gmail.com" });
+    renderProfile();
+
+    expect(screen.getByLabelText("Email")).toHaveAccessibleDescription(
+      "Use your school or personal email."
+    );
+    await changeEmail(user, "ada.lovelace@gmail.com");
+    await save(user);
+
+    await waitFor(() =>
+      expect(updateUser).toHaveBeenCalledWith("7", { email: "ada.lovelace@gmail.com" }, "tok")
+    );
   });
 
   it("sends a new password unchanged and clears the password fields after saving", async () => {
@@ -206,14 +278,14 @@ describe("Saving changes (QB-47)", () => {
 
   it("leaves the password out when the password fields are empty", async () => {
     const user = userEvent.setup();
-    updateUser.mockResolvedValue({ ...PROFILE, name: "Ada L." });
+    updateUser.mockResolvedValue({ ...PROFILE, email: "ada@example.com" });
     renderProfile();
 
-    await user.type(screen.getByLabelText("Name"), " L.");
+    await changeEmail(user);
     await save(user);
 
     await waitFor(() => expect(updateUser).toHaveBeenCalled());
-    expect(updateUser.mock.calls[0][1]).toEqual({ name: "Ada L." });
+    expect(updateUser.mock.calls[0][1]).toEqual({ email: "ada@example.com" });
   });
 
   it("prevents duplicate saves while a save is in flight", async () => {
@@ -222,14 +294,14 @@ describe("Saving changes (QB-47)", () => {
     updateUser.mockReturnValue(new Promise((resolve) => (finish = resolve)));
     renderProfile();
 
-    await user.type(screen.getByLabelText("Name"), "!");
+    await changeEmail(user);
     await save(user);
     const button = screen.getByRole("button", { name: "Saving…" });
     expect(button).toBeDisabled();
     await user.click(button);
 
     expect(updateUser).toHaveBeenCalledTimes(1);
-    finish({ ...PROFILE, name: "Ada!" });
+    finish({ ...PROFILE, email: "ada@example.com" });
     expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
   });
 
@@ -258,15 +330,18 @@ describe("Saving changes (QB-47)", () => {
     it("reloads the profile and reports the save if it went through", async () => {
       const user = userEvent.setup();
       updateUser.mockRejectedValue(lost());
-      getCurrentUser.mockResolvedValue({ ...PROFILE, name: "Ada!" });
+      getCurrentUser.mockResolvedValue({ ...PROFILE, email: "ada@example.com" });
       const props = renderProfile();
 
-      await user.type(screen.getByLabelText("Name"), "!");
+      await changeEmail(user);
       await save(user);
 
       expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
       expect(getCurrentUser).toHaveBeenCalledWith("tok");
-      expect(props.onProfileUpdated).toHaveBeenCalledWith({ ...PROFILE, name: "Ada!" });
+      expect(props.onProfileUpdated).toHaveBeenCalledWith({
+        ...PROFILE,
+        email: "ada@example.com",
+      });
       expect(within(form()).getByRole("alert")).toBeEmptyDOMElement();
     });
 
@@ -276,7 +351,7 @@ describe("Saving changes (QB-47)", () => {
       getCurrentUser.mockResolvedValue(PROFILE);
       const props = renderProfile();
 
-      await user.type(screen.getByLabelText("Name"), "!");
+      await changeEmail(user);
       await save(user);
 
       const alert = await within(form()).findByRole("alert");
@@ -287,7 +362,7 @@ describe("Saving changes (QB-47)", () => {
         )
       );
       expect(alert).not.toHaveTextContent(/not saved/);
-      expect(screen.getByLabelText("Name")).toHaveValue("Ada!");
+      expect(screen.getByLabelText("Email")).toHaveValue("ada@example.com");
       expect(props.onProfileUpdated).toHaveBeenCalledWith(PROFILE);
       expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
     });
@@ -318,7 +393,7 @@ describe("Saving changes (QB-47)", () => {
       getCurrentUser.mockRejectedValue(lost());
       const props = renderProfile();
 
-      await user.type(screen.getByLabelText("Name"), "!");
+      await changeEmail(user);
       await save(user);
 
       const alert = await within(form()).findByRole("alert");
@@ -337,7 +412,7 @@ describe("Saving changes (QB-47)", () => {
     updateUser.mockRejectedValue(new ApiError("Not authenticated", 401));
     const props = renderProfile();
 
-    await user.type(screen.getByLabelText("Name"), "!");
+    await changeEmail(user);
     await save(user);
 
     await waitFor(() => expect(props.onSessionExpired).toHaveBeenCalledTimes(1));
@@ -348,7 +423,7 @@ describe("Saving changes (QB-47)", () => {
     const props = renderProfile({
       session: { ...SESSION, expiresAt: new Date(Date.now() + 60000).toISOString() },
     });
-    await user.type(screen.getByLabelText("Name"), "!");
+    await changeEmail(user);
 
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 120000);
     try {
@@ -365,14 +440,14 @@ describe("Saving changes (QB-47)", () => {
 describe("Refreshing roles and requests", () => {
   const refresh = (user) => user.click(screen.getByRole("button", { name: "Refresh" }));
 
-  it("reloads the profile and keeps unsaved edits", async () => {
+  it("reloads the profile and keeps an unsaved email edit", async () => {
     const user = userEvent.setup();
     const fresh = { ...PROFILE, email: "ada@example.com", roles: ["student", "organizer"] };
     let finish;
     getCurrentUser.mockReturnValue(new Promise((resolve) => (finish = resolve)));
     const props = renderProfile();
 
-    await user.type(screen.getByLabelText("Name"), " (edited)");
+    await changeEmail(user, "ada@edited.com");
     await refresh(user);
     const button = screen.getByRole("button", { name: "Refreshing…" });
     expect(button).toBeDisabled();
@@ -383,8 +458,18 @@ describe("Refreshing roles and requests", () => {
     expect(await screen.findByText("Your roles and details are up to date.")).toBeInTheDocument();
     expect(getCurrentUser).toHaveBeenCalledWith("tok");
     expect(props.onProfileUpdated).toHaveBeenCalledWith(fresh);
-    expect(screen.getByLabelText("Name")).toHaveValue("Ada (edited)");
-    // An untouched field shows the new value, so saving won't change it back.
+    expect(screen.getByLabelText("Email")).toHaveValue("ada@edited.com");
+  });
+
+  it("shows the new email when the field was not edited", async () => {
+    const user = userEvent.setup();
+    getCurrentUser.mockResolvedValue({ ...PROFILE, email: "ada@example.com" });
+    renderProfile();
+
+    await refresh(user);
+
+    expect(await screen.findByText("Your roles and details are up to date.")).toBeInTheDocument();
+    // So saving won't change it back.
     expect(screen.getByLabelText("Email")).toHaveValue("ada@example.com");
   });
 
@@ -407,13 +492,13 @@ describe("Refreshing roles and requests", () => {
     getCurrentUser.mockRejectedValue(new ApiError("Couldn't get a response.", 0));
     const props = renderProfile();
 
-    await user.type(screen.getByLabelText("Name"), "!");
+    await changeEmail(user);
     await refresh(user);
 
     expect(
       await screen.findByText("Your account couldn't be refreshed. Couldn't get a response.")
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Name")).toHaveValue("Ada!");
+    expect(screen.getByLabelText("Email")).toHaveValue("ada@example.com");
     expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
     expect(props.onSessionExpired).not.toHaveBeenCalled();
   });

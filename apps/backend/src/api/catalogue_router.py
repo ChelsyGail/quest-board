@@ -1,4 +1,7 @@
 import logging
+from dataclasses import replace
+from datetime import date
+from datetime import datetime
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -18,6 +21,9 @@ from models.responses.catalogue import ItemListResponse
 from models.responses.catalogue import ItemResponse
 from models.responses.catalogue import ParticipantListResponse
 from models.users import UserRole
+from pydantic import AwareDatetime
+from services.catalogue_service import day_end_utc
+from services.catalogue_service import day_start_utc
 from services.catalogue_service import InvalidTimeWindowError
 from services.catalogue_service import ItemAlreadyPublishedError
 from services.catalogue_service import ItemArchivedError
@@ -38,6 +44,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
+
+# The calendar is unpaged, so the window itself is what bounds the response.
+MAX_CALENDAR_DAYS = 366
 
 CREATE_ERROR_RESPONSES = {
     401: {"model": ItemErrorResponse},
@@ -105,14 +114,93 @@ def setup_catalogue_router(app: FastAPI, services: Services):
             max_length=200,
             description="Keyword matched against title and description",
         ),
+        category: str
+        | None = Query(
+            None,
+            max_length=64,
+            description="Keep only items in this category (academic, social, sports...)",
+        ),
+        from_day: date
+        | None = Query(
+            None,
+            alias="from",
+            description="Keep items still running on this date or later (UTC day)",
+        ),
+        to_day: date
+        | None = Query(
+            None,
+            alias="to",
+            description="Keep items that have started by the end of this date (UTC day)",
+        ),
+        window_start: AwareDatetime
+        | None = Query(
+            None,
+            description=(
+                "Keep items still running at this instant or later. Use with "
+                "window_end for days in the student's own time zone."
+            ),
+        ),
+        window_end: AwareDatetime
+        | None = Query(
+            None,
+            description="Keep items that have started by this instant",
+        ),
         current_user: CurrentUser = Depends(get_current_user),
     ):
+        if from_day and to_day and to_day < from_day:
+            return _invalid_date_range()
+        if window_start and window_end and window_end < window_start:
+            return _invalid_window()
+        filters = _filters(q, category, from_day, to_day)
+        filters = replace(
+            filters,
+            window_start=_latest(filters.window_start, window_start),
+            window_end=_earliest(filters.window_end, window_end),
+        )
         result = services.catalogue_service.list_published_items(
-            page, page_size, _filters(q)
+            page, page_size, filters
         )
         return ItemListResponse(
             data=[_to_resource(r) for r in result.items],
             meta={"page": _page_meta(result)},
+        )
+
+    @router.get(
+        "/calendar",
+        response_model=ItemListResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": ItemErrorResponse},
+            422: {"model": ItemErrorResponse},
+        },
+    )
+    def list_calendar_items(
+        from_day: date = Query(
+            ...,
+            alias="from",
+            description="First day of the window (UTC day)",
+        ),
+        to_day: date = Query(
+            ...,
+            alias="to",
+            description="Last day of the window, inclusive (UTC day)",
+        ),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        if to_day < from_day:
+            return _invalid_date_range()
+        if (to_day - from_day).days + 1 > MAX_CALENDAR_DAYS:
+            return _window_too_long()
+
+        records = services.catalogue_service.list_calendar_items(
+            day_start_utc(from_day), day_end_utc(to_day)
+        )
+        return ItemListResponse(
+            data=[_to_resource(record) for record in records],
+            meta={
+                "range": {"from": from_day.isoformat(), "to": to_day.isoformat()},
+                "count": len(records),
+            },
         )
 
     @router.get(
@@ -282,33 +370,90 @@ def _archived():
     )
 
 
-def _to_resource(record: ItemRecord) -> ItemResourceData:
-    return ItemResourceData(
-        id=str(record.item_id),
-        attributes=ItemAttributes(
-            kind=record.kind,
-            owner_id=str(record.owner_id),
-            title=record.title,
-            description=record.description,
-            location=record.location,
-            starts_at=record.starts_at,
-            ends_at=record.ends_at,
-            time_zone=record.time_zone,
-            category=record.category,
-            proof_instructions=record.proof_instructions,
-            point_value=record.point_value,
-            status=record.status,
-            published_at=record.published_at,
-            archived_at=record.archived_at,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-        ),
+def to_item_attributes(record: ItemRecord) -> ItemAttributes:
+    """The item fields every item-shaped response carries, shared with BE-35."""
+    return ItemAttributes(
+        kind=record.kind,
+        owner_id=str(record.owner_id),
+        title=record.title,
+        description=record.description,
+        location=record.location,
+        starts_at=record.starts_at,
+        ends_at=record.ends_at,
+        time_zone=record.time_zone,
+        category=record.category,
+        proof_instructions=record.proof_instructions,
+        point_value=record.point_value,
+        status=record.status,
+        published_at=record.published_at,
+        archived_at=record.archived_at,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
     )
 
 
-def _filters(q: str | None) -> ItemFilters:
+def _to_resource(record: ItemRecord) -> ItemResourceData:
+    return ItemResourceData(
+        id=str(record.item_id), attributes=to_item_attributes(record)
+    )
+
+
+def _filters(
+    q: str | None,
+    category: str | None,
+    from_day: date | None = None,
+    to_day: date | None = None,
+) -> ItemFilters:
     """A blank or whitespace-only parameter means "no filter", not "match nothing"."""
-    return ItemFilters(keyword=(q or "").strip() or None)
+    return ItemFilters(
+        keyword=(q or "").strip() or None,
+        category=(category or "").strip() or None,
+        window_start=day_start_utc(from_day) if from_day else None,
+        window_end=day_end_utc(to_day) if to_day else None,
+    )
+
+
+def _window_too_long():
+    return json_api_error_response(
+        ItemErrorResponse,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "window_too_long",
+        "Window too long",
+        f"A calendar window covers at most {MAX_CALENDAR_DAYS} days.",
+        "/query/to",
+    )
+
+
+def _invalid_date_range():
+    return json_api_error_response(
+        ItemErrorResponse,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "invalid_date_range",
+        "Invalid date range",
+        "to must not be earlier than from.",
+        "/query/to",
+    )
+
+
+def _invalid_window():
+    return json_api_error_response(
+        ItemErrorResponse,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "invalid_date_range",
+        "Invalid date range",
+        "window_end must not be earlier than window_start.",
+        "/query/window_end",
+    )
+
+
+def _latest(*values: datetime | None) -> datetime | None:
+    present = [value for value in values if value is not None]
+    return max(present) if present else None
+
+
+def _earliest(*values: datetime | None) -> datetime | None:
+    present = [value for value in values if value is not None]
+    return min(present) if present else None
 
 
 def _page_meta(result: ItemPage) -> dict:
