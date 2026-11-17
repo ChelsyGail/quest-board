@@ -1,8 +1,8 @@
 import { useState } from "react";
 import {
+  EMAIL_HINT,
   EMAIL_MAX_LENGTH,
   EMAIL_PATTERN,
-  NAME_MAX_LENGTH,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   formErrorsFrom,
@@ -15,9 +15,9 @@ import MyRoleRequests from "./MyRoleRequests.jsx";
 
 // `profile` comes from GET /users/me. It is null when this backend has no /users/me
 // yet; then only the fields the user fills in are sent.
+// The name is the user's username: it is set at signup and never sent in an update.
 function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
   const isLoaded = profile !== null;
-  const [name, setName] = useState(isLoaded ? profile.name : "");
   const [email, setEmail] = useState(isLoaded ? profile.email : "");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -32,7 +32,7 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
   const [requestsRefreshKey, setRequestsRefreshKey] = useState(0);
 
   // Reloads roles and access requests, e.g. after an admin reviewed a request.
-  // Name and email inputs keep unsaved edits; untouched inputs take the new values.
+  // The email input keeps an unsaved edit; if untouched, it takes the new value.
   async function handleRefresh() {
     if (isRefreshing) return;
     if (Date.now() >= Date.parse(session.expiresAt)) {
@@ -56,7 +56,6 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
       setIsRefreshing(false);
       return;
     }
-    setName((current) => (current === profile.name ? user.name : current));
     setEmail((current) => (current === profile.email ? user.email : current));
     onProfileUpdated(user);
     setRefreshMessage("Your roles and details are up to date.");
@@ -84,18 +83,15 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
     }
 
     onProfileUpdated(saved);
-    const detailsSaved =
-      (!changes.name || saved.name === changes.name) &&
-      (!changes.email || saved.email === changes.email);
+    const detailsSaved = !changes.email || saved.email === changes.email;
     if (detailsSaved && !changes.password) {
-      setName(saved.name);
       setEmail(saved.email);
       setSuccessMessage("Changes saved.");
     } else if (detailsSaved) {
       // A password can't be read back, so its result stays unknown.
       setFormError(
         `We couldn't confirm whether your new password was saved. ${error.message} ` +
-          (changes.name || changes.email ? "Your other changes were saved. " : "") +
+          (changes.email ? "Your other changes were saved. " : "") +
           "You can save it again."
       );
     } else {
@@ -109,22 +105,11 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
     event.preventDefault();
     if (isSubmitting) return;
 
-    const trimmedName = name.trim();
     const trimmedEmail = email.trim();
     const newErrors = {};
     const changes = {};
 
     // Only send fields that were filled in and actually changed.
-    if (trimmedName !== "") {
-      if (trimmedName.length > NAME_MAX_LENGTH) {
-        newErrors.name = `Name must be at most ${NAME_MAX_LENGTH} characters.`;
-      } else if (!isLoaded || trimmedName !== profile.name) {
-        changes.name = trimmedName;
-      }
-    } else if (isLoaded) {
-      newErrors.name = "Name cannot be empty.";
-    }
-
     if (trimmedEmail !== "") {
       if (!EMAIL_PATTERN.test(trimmedEmail) || trimmedEmail.length > EMAIL_MAX_LENGTH) {
         newErrors.email = "Please enter a valid email address.";
@@ -157,7 +142,7 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
 
     if (Object.keys(changes).length === 0) {
       setFormError(
-        isLoaded ? "You haven't changed anything yet." : "Enter a new name, email, or password."
+        isLoaded ? "You haven't changed anything yet." : "Enter a new email or password."
       );
       return;
     }
@@ -179,7 +164,7 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
       if (error.resultUnknown) {
         await checkWhetherSaved(changes, error);
       } else {
-        const mapped = formErrorsFrom(error, ["name", "email", "password"]);
+        const mapped = formErrorsFrom(error, ["email", "password"]);
         setErrors(mapped.fieldErrors);
         setFormError(mapped.formError);
       }
@@ -189,10 +174,8 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
 
     if (isLoaded) {
       onProfileUpdated(updatedUser);
-      setName(updatedUser.name);
       setEmail(updatedUser.email);
     } else {
-      setName("");
       setEmail("");
     }
     setNewPassword("");
@@ -204,8 +187,10 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
   }
 
   return (
-    <>
-      <h2 className="screen-title">Your account</h2>
+    <div className="page-stack">
+      <header className="page-header">
+        <h2 className="screen-title">Your account</h2>
+      </header>
 
       {isLoaded ? (
         <>
@@ -239,72 +224,87 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
         </p>
       )}
 
-      <form onSubmit={handleSubmit} noValidate>
-        <div className="field">
-          <label htmlFor="name">{isLoaded ? "Name" : "New name"}</label>
-          <input
-            type="text"
-            id="name"
-            autoComplete="name"
-            placeholder={isLoaded ? "" : "Leave empty to keep your current name"}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            className={errors.name ? "invalid" : ""}
-          />
-          <p className="error">{errors.name}</p>
+      <form onSubmit={handleSubmit} noValidate className="profile-form panel">
+        <div className="form-grid">
+          {isLoaded && (
+            <div className="field">
+              <label htmlFor="name">Name</label>
+              <input
+                type="text"
+                id="name"
+                value={profile.name}
+                readOnly
+                aria-describedby="name-hint"
+                className="read-only"
+              />
+              <p className="hint" id="name-hint">
+                Your name is your QuestBoard username and can't be changed.
+              </p>
+            </div>
+          )}
+
+          <div className="field">
+            <label htmlFor="email">{isLoaded ? "Email" : "New email"}</label>
+            <input
+              type="email"
+              id="email"
+              autoComplete="email"
+              aria-describedby="email-hint"
+              placeholder={isLoaded ? "" : "Leave empty to keep your current email"}
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className={errors.email ? "invalid" : ""}
+            />
+            <p className="hint" id="email-hint">
+              {EMAIL_HINT}
+            </p>
+            <p className="error">{errors.email}</p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="new-password">New password</label>
+            <input
+              type="password"
+              id="new-password"
+              autoComplete="new-password"
+              aria-describedby="new-password-hint"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              className={errors.password ? "invalid" : ""}
+            />
+            <p className="hint" id="new-password-hint">
+              Leave empty to keep your current password. {PASSWORD_MIN_LENGTH}–
+              {PASSWORD_MAX_LENGTH} characters.
+            </p>
+            <p className="error">{errors.password}</p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="confirm-new-password">Confirm new password</label>
+            <input
+              type="password"
+              id="confirm-new-password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              className={errors.confirmPassword ? "invalid" : ""}
+            />
+            <p className="error">{errors.confirmPassword}</p>
+          </div>
         </div>
 
-        <div className="field">
-          <label htmlFor="email">{isLoaded ? "Email" : "New email"}</label>
-          <input
-            type="email"
-            id="email"
-            autoComplete="email"
-            placeholder={isLoaded ? "" : "Leave empty to keep your current email"}
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className={errors.email ? "invalid" : ""}
-          />
-          <p className="error">{errors.email}</p>
+        <div className="form-actions">
+          <button type="submit" className="button button-inline" disabled={isSubmitting}>
+            {isSubmitting ? "Saving…" : "Save changes"}
+          </button>
         </div>
 
-        <div className="field">
-          <label htmlFor="new-password">New password</label>
-          <input
-            type="password"
-            id="new-password"
-            autoComplete="new-password"
-            aria-describedby="new-password-hint"
-            value={newPassword}
-            onChange={(event) => setNewPassword(event.target.value)}
-            className={errors.password ? "invalid" : ""}
-          />
-          <p className="hint" id="new-password-hint">
-            Leave empty to keep your current password. {PASSWORD_MIN_LENGTH}–
-            {PASSWORD_MAX_LENGTH} characters.
-          </p>
-          <p className="error">{errors.password}</p>
-        </div>
-
-        <div className="field">
-          <label htmlFor="confirm-new-password">Confirm new password</label>
-          <input
-            type="password"
-            id="confirm-new-password"
-            autoComplete="new-password"
-            value={confirmPassword}
-            onChange={(event) => setConfirmPassword(event.target.value)}
-            className={errors.confirmPassword ? "invalid" : ""}
-          />
-          <p className="error">{errors.confirmPassword}</p>
-        </div>
-
-        <button type="submit" className="button" disabled={isSubmitting}>
-          {isSubmitting ? "Saving…" : "Save changes"}
-        </button>
-
-        <p className="form-error" role="alert">{formError}</p>
-        <p className="message" aria-live="polite">{successMessage}</p>
+        <p className="form-error form-error-left" role="alert">
+          {formError}
+        </p>
+        <p className="message message-left" aria-live="polite">
+          {successMessage}
+        </p>
       </form>
 
       {isLoaded && roleRequestsEnabled() && (
@@ -315,7 +315,7 @@ function Profile({ session, profile, onProfileUpdated, onSessionExpired }) {
           onSessionExpired={onSessionExpired}
         />
       )}
-    </>
+    </div>
   );
 }
 

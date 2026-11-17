@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local git worktrees (e.g. QB-50 backend for integration testing)
+.worktrees/
