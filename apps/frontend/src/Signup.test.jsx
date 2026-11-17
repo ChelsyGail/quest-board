@@ -109,6 +109,31 @@ describe("Signup validation (QB-167)", () => {
     expect(createRoleRequest).not.toHaveBeenCalled();
   });
 
+  it("accepts a personal email as well as a school email (QB-168)", async () => {
+    const user = userEvent.setup();
+    registerUser.mockResolvedValue({ ...USER, email: "ada.lovelace@gmail.com" });
+    login.mockResolvedValue(SESSION);
+    const props = renderSignup();
+
+    expect(screen.getByLabelText("Email")).toHaveAccessibleDescription(
+      "Use your school or personal email."
+    );
+    expect(screen.getByLabelText("Email")).toHaveAttribute("placeholder", "you@example.com");
+    await fillForm(user, { email: "ada.lovelace@gmail.com" });
+    await submit(user);
+
+    await waitFor(() => expect(props.onAuthenticated).toHaveBeenCalled());
+    expect(registerUser.mock.calls[0]).toEqual(["Ada", "ada.lovelace@gmail.com", PASSWORD]);
+    expect(login).toHaveBeenCalledWith("ada.lovelace@gmail.com", PASSWORD);
+  });
+
+  it("says the name is the username and can't be changed later (QB-169)", () => {
+    renderSignup();
+    expect(screen.getByLabelText("Name")).toHaveAccessibleDescription(
+      "This is your QuestBoard username. It can't be changed later."
+    );
+  });
+
   it("prevents duplicate submissions while the request is in flight", async () => {
     const user = userEvent.setup();
     let finish;
