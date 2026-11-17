@@ -250,6 +250,17 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.list-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.list-toolbar p {
+  margin: 0;
+}
+
 .request-actions {
   display: flex;
   gap: 8px;
@@ -279,6 +290,11 @@ textarea {
 .status-published {
   color: var(--success);
   background: #e6f4ea;
+}
+
+.status-joined {
+  color: var(--accent);
+  background: #eef2ff;
 }
 
 .status-pending {

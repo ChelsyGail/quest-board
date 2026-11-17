@@ -8,6 +8,7 @@ import {
   getCurrentUser,
   listMyItems,
   listMyRoleRequests,
+  listParticipants,
   listRoleRequests,
   registerUser,
   reviewRoleRequest,
@@ -395,5 +396,40 @@ describe("api client", () => {
     expect(options.method).toBe("PATCH");
     expect(JSON.parse(options.body)).toEqual({ title: "Chess night" });
     expect(updated.title).toBe("Chess night");
+  });
+
+  it("lists an item's participants from GET /items/{id}/participants", async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(200, {
+        data: [
+          {
+            type: "participants",
+            id: "1",
+            attributes: {
+              user_id: "20",
+              name: "Grace",
+              status: "joined",
+              joined_at: "2026-10-20T08:15:00Z",
+            },
+          },
+        ],
+        meta: { count: 1 },
+      })
+    );
+
+    const participants = await listParticipants("12", "org-tok");
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://api.test/items/12/participants");
+    expect(options.headers.Authorization).toBe("Bearer org-tok");
+    expect(participants).toEqual([
+      {
+        id: "1",
+        userId: "20",
+        name: "Grace",
+        status: "joined",
+        joinedAt: "2026-10-20T08:15:00Z",
+      },
+    ]);
   });
 });
