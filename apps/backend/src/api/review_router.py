@@ -7,6 +7,7 @@ from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import Path
 from fastapi import Query
+from fastapi import Response
 from fastapi import status
 from models.catalogue import ItemResourceData
 from models.responses.review import QueueResponse
@@ -102,9 +103,16 @@ def setup_review_router(app: FastAPI, services: Services):
         response_model=ReviewResponse,
         response_model_exclude_none=True,
         status_code=status.HTTP_201_CREATED,
-        responses=DECISION_ERROR_RESPONSES,
+        responses={
+            200: {
+                "model": ReviewResponse,
+                "description": "Retried approval: the review it already made",
+            },
+            **DECISION_ERROR_RESPONSES,
+        },
     )
     def approve_submission(
+        response: Response,
         submission_id: int = Path(gt=0),
         current_user: CurrentUser = Depends(require_moderator),
     ):
@@ -122,6 +130,9 @@ def setup_review_router(app: FastAPI, services: Services):
             return _already_reviewed()
         except SubmissionNotPendingError:
             return _not_pending()
+        if record.replayed:
+            # BE-50: nothing new was created, so a retry answers 200, not 201.
+            response.status_code = status.HTTP_200_OK
         return ReviewResponse(data=to_review_resource(record))
 
     @router.post(

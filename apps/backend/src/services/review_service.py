@@ -63,6 +63,8 @@ class ReviewRecord:
     feedback: str | None
     reviewed_at: datetime
     points_awarded: int | None = None
+    # True when a retried approval returned the review it already made (BE-50).
+    replayed: bool = False
 
 
 @dataclass(frozen=True)
@@ -219,7 +221,10 @@ class ReviewService:
                     extra={"submission_id": submission_id, "reviewer_id": reviewer_id},
                 )
                 raise SelfReviewError
-            if self._find_review(connection, submission_id) is not None:
+            existing = self._find_review(connection, submission_id)
+            if existing is not None:
+                if _is_retry(existing, reviewer_id, decision):
+                    return self._replay(connection, existing)
                 raise SubmissionAlreadyReviewedError
             if (
                 participation.status != ParticipationStatus.PENDING.value
@@ -264,6 +269,27 @@ class ReviewService:
             },
         )
         return _to_review(row, points_awarded)
+
+    @staticmethod
+    def _replay(connection, existing) -> ReviewRecord:
+        """BE-50: the approval already committed (the moderator's client probably
+        timed out before it saw the answer). Return that review and the points
+        it awarded. Nothing is written, so nothing can be awarded twice."""
+        points = connection.execute(
+            text(
+                "SELECT points FROM point_awards "
+                "WHERE participation_id = :participation_id"
+            ),
+            {"participation_id": existing.participation_id},
+        ).scalar_one_or_none()
+        logger.info(
+            "Approval retry answered with the existing review",
+            extra={
+                "review_id": existing.review_id,
+                "submission_id": existing.submission_id,
+            },
+        )
+        return _to_review(existing, points, replayed=True)
 
     @staticmethod
     def _find_review(connection, submission_id: int):
@@ -367,7 +393,17 @@ class ReviewService:
             raise NotAModeratorError
 
 
-def _to_review(row, points_awarded: int | None) -> ReviewRecord:
+def _is_retry(existing, reviewer_id: int, decision: SubmissionStatus) -> bool:
+    """The same moderator approving the same attempt again. A different
+    moderator, or a different decision, is a second review and gets 409."""
+    return (
+        decision == SubmissionStatus.APPROVED
+        and SubmissionStatus(existing.decision) == SubmissionStatus.APPROVED
+        and existing.reviewer_id == reviewer_id
+    )
+
+
+def _to_review(row, points_awarded: int | None, replayed: bool = False) -> ReviewRecord:
     return ReviewRecord(
         review_id=row.review_id,
         submission_id=row.submission_id,
@@ -377,4 +413,5 @@ def _to_review(row, points_awarded: int | None) -> ReviewRecord:
         feedback=row.feedback,
         reviewed_at=from_utc_naive(row.created_at),
         points_awarded=points_awarded,
+        replayed=replayed,
     )
