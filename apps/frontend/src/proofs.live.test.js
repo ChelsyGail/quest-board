@@ -325,4 +325,29 @@ describe("live proof adapter", () => {
       client.submitProof("99", { text: "Done.", photos: [photo], video: null })
     ).rejects.toMatchObject({ status: 0, reconcileHint: true });
   });
+
+  it("marks upload-stage failures without reconcileHint so UI does not imply a submit", async () => {
+    function FakeXHR() {
+      this.upload = { onprogress: null };
+      this.status = 0;
+      this.responseText = "";
+    }
+    FakeXHR.prototype.open = vi.fn();
+    FakeXHR.prototype.setRequestHeader = vi.fn();
+    FakeXHR.prototype.send = function send() {
+      queueMicrotask(() => {
+        this.status = 0;
+        this.onerror();
+      });
+    };
+    vi.stubGlobal("XMLHttpRequest", FakeXHR);
+    const submitFetch = vi.fn();
+    vi.stubGlobal("fetch", submitFetch);
+    const client = getProofClient({ token: "tok", userId: "7", userName: "Ada" });
+    const photo = new File([new Uint8Array(4)], "a.png", { type: "image/png" });
+    await expect(
+      client.submitProof("99", { text: "x", photos: [photo], video: null })
+    ).rejects.toMatchObject({ status: 0, uploadStage: true });
+    expect(submitFetch).not.toHaveBeenCalled();
+  });
 });

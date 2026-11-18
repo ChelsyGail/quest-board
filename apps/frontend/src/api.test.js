@@ -9,6 +9,7 @@ import {
   isItemNotFound,
   isMissingRoute,
   joinItem,
+  leaveItem,
   listMyParticipations,
   listMyRoleRequests,
   listPublishedItems,
@@ -612,6 +613,20 @@ describe("quest and participation client (QB-58/60/90)", () => {
     });
     expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/items/11/join");
     expect(fetchMock.mock.calls[0][1].method).toBe("POST");
+  });
+
+  it("leaves with DELETE /items/{id}/join and accepts an empty 204", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 204,
+      json: async () => {
+        throw new Error("no body");
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(leaveItem("11", "tok")).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[0][0]).toBe("http://api.test/items/11/join");
+    expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
   });
 
   it("reads the nested participation from GET /me/participations", async () => {

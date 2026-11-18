@@ -32,10 +32,13 @@ function ModeratorQueue({ session, onSessionExpired }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageMeta, setPageMeta] = useState({ number: 1, size: 20, totalItems: 0, totalPages: 1 });
   const loadGen = useRef(0);
   const selectedRef = useRef(null);
+  const detailRef = useRef(null);
 
-  async function loadQueue({ soft = false } = {}) {
+  async function loadQueue({ soft = false, pageNumber = page } = {}) {
     if (!client) {
       setStatus("unavailable");
       return;
@@ -48,9 +51,23 @@ function ModeratorQueue({ session, onSessionExpired }) {
       setError("");
     }
     try {
-      const result = await client.listPending();
+      const result = await client.listPending({ page: pageNumber, pageSize: 20 });
       if (gen !== loadGen.current || userId !== session.userId) return;
-      setRows(Array.isArray(result) ? result : result.items || []);
+      const items = Array.isArray(result) ? result : result.items || [];
+      const meta = result?.page || {
+        number: pageNumber,
+        size: 20,
+        totalItems: items.length,
+        totalPages: 1,
+      };
+      setRows(items);
+      setPageMeta(meta);
+      setPage(meta.number || pageNumber);
+      // Drop selection if the open row left this page.
+      if (selectedRef.current && !items.some((row) => row.id === selectedRef.current)) {
+        selectedRef.current = null;
+        setSelectedId(null);
+      }
       setStatus("ready");
       setError("");
     } catch (err) {
@@ -75,17 +92,18 @@ function ModeratorQueue({ session, onSessionExpired }) {
       setStatus("unavailable");
       return undefined;
     }
-    loadQueue({ soft: false });
+    loadQueue({ soft: false, pageNumber: page });
     return () => {
       loadGen.current += 1;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, session.userId, session.token]);
+  }, [client, session.userId, session.token, page]);
 
   useEffect(() => {
     if (!client || !selectedId) {
       setDetail((current) => {
         revokeSubmissionMediaUrls(current);
+        detailRef.current = null;
         return null;
       });
       return undefined;
@@ -95,9 +113,13 @@ function ModeratorQueue({ session, onSessionExpired }) {
     (async () => {
       try {
         const submission = await client.getModerationSubmission(selectedId);
-        if (cancelled || selectedRef.current !== requestId) return;
+        if (cancelled || selectedRef.current !== requestId) {
+          revokeSubmissionMediaUrls(submission);
+          return;
+        }
         setDetail((current) => {
           revokeSubmissionMediaUrls(current);
+          detailRef.current = submission;
           return submission;
         });
         setFeedback("");
@@ -112,6 +134,14 @@ function ModeratorQueue({ session, onSessionExpired }) {
       cancelled = true;
     };
   }, [client, selectedId]);
+
+  useEffect(
+    () => () => {
+      revokeSubmissionMediaUrls(detailRef.current);
+      detailRef.current = null;
+    },
+    []
+  );
 
   if (!client) {
     return (
@@ -228,23 +258,50 @@ function ModeratorQueue({ session, onSessionExpired }) {
           </p>
         )}
         {status === "ready" && rows.length > 0 && (
-          <ul className="moderation-list">
-            {rows.map((row) => (
-              <li key={row.id}>
+          <>
+            <ul className="moderation-list">
+              {rows.map((row) => (
+                <li key={row.id}>
+                  <button
+                    type="button"
+                    className={selectedId === row.id ? "moderation-row active" : "moderation-row"}
+                    onClick={() => selectRow(row.id)}
+                  >
+                    <strong>{row.itemTitle || `Quest #${row.itemId}`}</strong>
+                    <span className="muted">
+                      {row.submitterName || "Student"} ·{" "}
+                      {row.submittedAt ? new Date(row.submittedAt).toLocaleString() : ""}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {pageMeta.totalPages > 1 && (
+              <nav className="pagination" aria-label="Pending proof pages">
                 <button
                   type="button"
-                  className={selectedId === row.id ? "moderation-row active" : "moderation-row"}
-                  onClick={() => selectRow(row.id)}
+                  className="button button-secondary button-small"
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={page <= 1 || refreshing || busy}
                 >
-                  <strong>{row.itemTitle || `Quest #${row.itemId}`}</strong>
-                  <span className="muted">
-                    {row.submitterName || "Student"} ·{" "}
-                    {row.submittedAt ? new Date(row.submittedAt).toLocaleString() : ""}
-                  </span>
+                  Previous
                 </button>
-              </li>
-            ))}
-          </ul>
+                <span className="small muted">
+                  Page {pageMeta.number} of {pageMeta.totalPages} · {pageMeta.totalItems} pending
+                </span>
+                <button
+                  type="button"
+                  className="button button-secondary button-small"
+                  onClick={() =>
+                    setPage((current) => Math.min(pageMeta.totalPages, current + 1))
+                  }
+                  disabled={page >= pageMeta.totalPages || refreshing || busy}
+                >
+                  Next
+                </button>
+              </nav>
+            )}
+          </>
         )}
         {notice && (
           <p className="notice" role="status">

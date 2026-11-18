@@ -1,19 +1,28 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, getItem, joinItem, listMyParticipations, listPublishedItems } from "./api.js";
+import {
+  ApiError,
+  getItem,
+  joinItem,
+  leaveItem,
+  listMyParticipations,
+  listPublishedItems,
+} from "./api.js";
 import QuestBoard from "./QuestBoard.jsx";
 
 vi.mock("./api.js", async (importOriginal) => {
   const actual = await importOriginal();
   const getItem = vi.fn();
   const joinItem = vi.fn();
+  const leaveItem = vi.fn();
   const listMyParticipations = vi.fn();
   const listPublishedItems = vi.fn();
   return {
     ...actual,
     getItem,
     joinItem,
+    leaveItem,
     listMyParticipations,
     listPublishedItems,
     questsDemoEnabled: vi.fn(() => false),
@@ -21,6 +30,7 @@ vi.mock("./api.js", async (importOriginal) => {
       isDemo: false,
       getItem: (id) => getItem(id, "tok"),
       joinItem: (id) => joinItem(id, "tok"),
+      leaveItem: (id) => leaveItem(id, "tok"),
       listMyParticipations: () => listMyParticipations("tok"),
       listPublishedItems: (query) => listPublishedItems(query, "tok"),
     }),
@@ -347,6 +357,37 @@ describe("Joining and RSVP (QB-90)", () => {
 
     await user.click(screen.getByRole("button", { name: "← All quests and events" }));
     expect(within(screen.getByRole("list", { name: "Published quests and events" })).getByText("Joined")).toBeInTheDocument();
+  });
+
+  it("lets a student leave before proof and hides leave after proof lock", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    listMyParticipations.mockResolvedValue([joined(quest())]);
+    leaveItem.mockResolvedValue(undefined);
+    renderBoard();
+    await open(user);
+
+    expect(screen.getByRole("button", { name: "Leave quest" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Leave quest" }));
+    expect(leaveItem).toHaveBeenCalledWith("11", "tok");
+    expect(await screen.findByText(/You left "Campus cleanup"/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Join quest" })).toBeInTheDocument();
+  });
+
+  it("surfaces authoritative leave 409 after proof without clearing membership", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    listMyParticipations.mockResolvedValue([joined(quest())]);
+    leaveItem.mockRejectedValue(
+      new ApiError("Proof already submitted", 409, {}, "proof_already_submitted")
+    );
+    renderBoard();
+    await open(user);
+    await user.click(screen.getByRole("button", { name: "Leave quest" }));
+    expect(
+      await screen.findByText(/can't leave .* after submitting proof/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText("Joined")).toBeInTheDocument();
   });
 
   it("opens the quest discussion only once the student has joined", async () => {

@@ -1,7 +1,7 @@
 // Proof submission and moderator review client.
 // Live student proof: POST /uploads then POST /participations/{id}/submissions.
 // Live moderation: GET/POST /moderation/submissions… (VITE_MODERATION_API).
-import { ApiError } from "./api.js";
+import { ApiError, normalizePageMeta } from "./api.js";
 import {
   demoApproveSubmission,
   demoGetMySubmission,
@@ -280,8 +280,8 @@ export function requirementsFromItem(item) {
     instructions: item?.proofInstructions || "",
     requiresText,
     requiresMedia,
-    // Media may be photo or video; do not invent a separate mandatory video flag.
-    requiresPhoto: requiresMedia,
+    // requires_media_proof means either a supported photo or video — not photo-only.
+    requiresPhoto: false,
     requiresVideo: false,
     maxMedia: PROOF_MAX_MEDIA,
     maxPhotos: PROOF_MAX_PHOTOS,
@@ -293,6 +293,17 @@ export function requirementsFromItem(item) {
     structuredRequirementsSupported: hasStructured,
   };
 }
+
+/** True when `candidate` is a newer attempt than `previous` (or first recorded proof). */
+export function isNewerSubmission(candidate, previous) {
+  if (!candidate) return false;
+  if (!previous) return true;
+  if (String(candidate.id) !== String(previous.id)) return true;
+  const nextAttempt = Number(candidate.attemptNumber ?? 0);
+  const prevAttempt = Number(previous.attemptNumber ?? 0);
+  return Number.isFinite(nextAttempt) && Number.isFinite(prevAttempt) && nextAttempt > prevAttempt;
+}
+
 
 export function basicRequirements(item) {
   return requirementsFromItem({
@@ -513,21 +524,26 @@ function liveClient(session) {
       const total = files.length;
       let completed = 0;
 
-      for (const file of files) {
-        const key = fileCacheKey(userId, participationId, file);
-        let mediaId = uploadIds.get(key);
-        if (!mediaId) {
-          const resource = await uploadRawFile(file, token, (ratio) => {
-            if (total === 0) return;
-            const overall = ((completed + ratio) / total) * 90;
-            onProgress?.(Math.max(1, Math.round(overall)));
-          });
-          mediaId = Number(resource.id);
-          uploadIds.set(key, mediaId);
+      try {
+        for (const file of files) {
+          const key = fileCacheKey(userId, participationId, file);
+          let mediaId = uploadIds.get(key);
+          if (!mediaId) {
+            const resource = await uploadRawFile(file, token, (ratio) => {
+              if (total === 0) return;
+              const overall = ((completed + ratio) / total) * 90;
+              onProgress?.(Math.max(1, Math.round(overall)));
+            });
+            mediaId = Number(resource.id);
+            uploadIds.set(key, mediaId);
+          }
+          mediaIds.push(mediaId);
+          completed += 1;
+          if (total > 0) onProgress?.(Math.round((completed / total) * 90));
         }
-        mediaIds.push(mediaId);
-        completed += 1;
-        if (total > 0) onProgress?.(Math.round((completed / total) * 90));
+      } catch (error) {
+        error.uploadStage = true;
+        throw error;
       }
 
       onProgress?.(total === 0 ? 50 : 95);
@@ -564,12 +580,11 @@ function liveClient(session) {
       const list = Array.isArray(document.data) ? document.data : document.data ? [document.data] : [];
       return {
         items: list.map(mapQueueEntry),
-        page: document.meta?.page || {
+        page: normalizePageMeta(document.meta?.page, {
           number: page,
           size: pageSize,
-          totalItems: list.length,
-          totalPages: 1,
-        },
+          itemCount: list.length,
+        }),
       };
     },
     async getModerationSubmission(id) {

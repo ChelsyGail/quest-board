@@ -97,28 +97,25 @@ describe("live rewards adapter", () => {
           }),
         };
       }
-      if (String(url).includes("/rewards?")) {
+      if (String(url).endsWith("/rewards/9") && (!options.method || options.method === "GET")) {
         return {
           ok: true,
           status: 200,
           json: async () => ({
-            data: [
-              {
-                type: "rewards",
-                id: "9",
-                attributes: {
-                  owner_id: "2",
-                  name: "Coffee",
-                  description: "A cup",
-                  eligibility: { type: "none" },
-                  point_cost: 10,
-                  viewer: { eligible: false, claimed: true, missing: [], progress: null },
-                  created_at: "2026-11-18T10:00:00Z",
-                  updated_at: "2026-11-18T10:00:00Z",
-                },
+            data: {
+              type: "rewards",
+              id: "9",
+              attributes: {
+                owner_id: "2",
+                name: "Coffee",
+                description: "A cup",
+                eligibility: { type: "none" },
+                point_cost: 10,
+                viewer: { eligible: false, claimed: true, missing: [], progress: null },
+                created_at: "2026-11-18T10:00:00Z",
+                updated_at: "2026-11-18T10:00:00Z",
               },
-            ],
-            meta: { page: { number: 1, size: 100, total_items: 1, total_pages: 1 } },
+            },
           }),
         };
       }
@@ -131,6 +128,9 @@ describe("live rewards adapter", () => {
     expect(result.reward.claimed).toBe(true);
     expect(result.achievements.availablePoints).toBe(15);
     expect(fetchMock.mock.calls.some(([url, opts]) => String(url).endsWith("/claims") && opts?.method === "POST")).toBe(
+      true
+    );
+    expect(fetchMock.mock.calls.some(([url, opts]) => String(url).endsWith("/rewards/9") && (!opts?.method || opts.method === "GET"))).toBe(
       true
     );
   });

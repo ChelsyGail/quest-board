@@ -2,7 +2,8 @@
 
 **Head:** `taha-final-sprint-integration` (this PR)  
 **Base:** `ChelsyGail/quest-board` `main`  
-**Candidate SHA:** verify with `git rev-parse HEAD` on this branch after the S8 commit (local tip supersedes older pushed notes).  
+**Candidate SHA:** verify with `git rev-parse HEAD` after the S9 Antigravity-fixes commit (supersedes review of `359dd02`).  
+**Prior reviewed SHA (Antigravity):** `359dd02fc8a72a42239581999df1b61cfe5363c0` — findings fixed in S9; retest the new tip only.  
 **Feature commit (discussions/docs/proof controls):** `a258346aae550a3ad67b9427b4e59ae50eb6cb69`  
 **Dependency:** Incorporates Chelsy `last-sprint` / PR **#24** backend (proof → moderation → recognition → rewards, migrations `0010`–`0020`) plus migration `0021` (discussions schema, **deferred acceptance**). Do **not** also merge PR #24 into `main` after this lands, or backend will double-apply. Prefer closing #24 as superseded once this RC is accepted.
 
@@ -51,21 +52,22 @@ VITE_DISCUSSIONS_API=false
 
 With those flags, Quest Grove / quest discussion UI shows **Coming soon / aren't available yet** (nav may still exist). Backend routes and migration `0021` stay applied but are out of release acceptance until next week. Do **not** delete or revert the implementation. Additional gating required for a hard cut: leave flags false in every deployed env; optional future: hide Grove nav when mode is off (not required — unavailable page is sufficient).
 
-## Verification (S8 — local candidate)
+## Verification (S9 — Antigravity findings fixed; supersedes S8 tip claims)
 
 | Check | Result |
 |---|---|
-| Frontend Vitest (`--maxWorkers=2`) | **356 passed** |
-| Backend pytest (unit + integration) | see S8 commit notes / handoff |
-| Migrations through `0021` on `questboard_review` | **applied** (schema retained) |
-| Leave after proof | **409** `proof_already_submitted` for pending/rejected/approved; join-only leave **204** (`docs/evidence/api-e2e-s8.txt`) |
-| Self-review | student+moderator approving own submission → **403** `self_review` |
-| Private media / duplicates / concurrent claims | other user **403**; duplicate submit **409** `attempt_pending`; approve replay **200**; parallel claims **201+409**, one row |
-| Partial upload / uncertain submit+claim recovery | unit coverage in `proofs.live.test.js` / `rewards.live.test.js` |
-| Browser (non-Grove) | `docs/evidence/s8-*.png` + `s8-browser-log.txt` — student/mod/org flows, claim, narrow, keyboard focus, reduced motion |
-| Grove browser acceptance | **Deferred** — unavailable page only (`s8-09-grove-deferred.png`) |
+| Frontend Vitest (`--maxWorkers=2`) | **363 passed** |
+| Backend pytest (unit + integration) | **35 passed** |
+| `npm run build` | **passed** |
+| Student Rewards + ModeratorQueue pagination | Prev/Next when `total_pages > 1` (`docs/evidence/s9-01`, `s9-05`, `s9-05b`) |
+| Claim refresh | `GET /rewards/{id}` after claim (no first-100 search / synthetic fallback) |
+| Uncertain resubmit reconcile | Requires newer submission id/attempt; upload-stage failures do not claim submit (`proofs.js` / `ProofSubmit.jsx` + tests) |
+| Leave / Cancel RSVP UI | `DELETE /items/{id}/join` with confirm + 409 handling (`s9-02`) |
+| Student submitted media preview | Authenticated blob `<img>` + “Photo or video Required” (`s9-03`) |
+| Checkbox alignment / Makefile env load / pytest+httpx in Poetry dev | Fixed |
+| Grove browser acceptance | **Deferred** — flags remain false |
 
-Older S6 leave-204 note on the approved proof quest was **misleading**; corrected in `docs/evidence/api-e2e.txt`.
+S8 leave-after-proof API matrix remains valid (`docs/evidence/api-e2e-s8.txt`).
 
 Live FE flags for in-scope RC:  
 `VITE_QUESTS_DEMO=false`, `VITE_PROOFS_DEMO=false`, `VITE_PROOFS_API=true`, `VITE_MODERATION_API=true`, `VITE_REWARDS_DEMO=false`, `VITE_REWARDS_API=true`, `VITE_DISCUSSIONS_DEMO=false`, `VITE_DISCUSSIONS_API=false`.
@@ -77,8 +79,9 @@ Live FE flags for in-scope RC:
 3. **PR #24** still open with DS_Store + no CI; coordinate close/supersede with Chelsy before dual-merge.
 4. **Role elevation** for organizer/moderator in local E2E used DB role updates; production path is role-requests.
 5. **Media durability** — documented `PROOF_MEDIA_DIR` + `make cleanup-uploads`; Compose `sleep infinity` is **not** tested durable storage. Deployments need a persistent volume (or object store) + scheduled cleanup. Cloud storage **not** introduced without demonstrated need.
-6. Antigravity / independent review must re-verify against the **exact local candidate SHA** — this document does **not** claim independent sign-off.
-7. Fork remote may lag; use this branch tip, not fork `main`.
+6. **Not claimed verified this turn:** large-video/HEIC live playback, uncertain live reward-claim CDP abort, production multi-instance storage durability.
+7. Antigravity / independent review must re-verify against the **exact new local candidate SHA** — prior review of `359dd02` does not sign off S9.
+8. Fork remote may lag; use this branch tip, not fork `main`.
 
 ## Branch disposition (do **not** auto-delete)
 

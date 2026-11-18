@@ -1,6 +1,6 @@
 // Achievements and rewards client — live routes under /users/me/achievements and /rewards.
 // Never falls back to demo after a live failure.
-import { ApiError } from "./api.js";
+import { ApiError, normalizePageMeta } from "./api.js";
 import {
   demoClaimReward,
   demoCreateReward,
@@ -222,13 +222,15 @@ function liveClient(session) {
       const list = Array.isArray(document.data) ? document.data : document.data ? [document.data] : [];
       return {
         items: list.map(mapReward),
-        page: document.meta?.page || {
+        page: normalizePageMeta(document.meta?.page, {
           number: page,
           size: pageSize,
-          total_items: list.length,
-          total_pages: 1,
-        },
+          itemCount: list.length,
+        }),
       };
+    },
+    async getReward(id) {
+      return mapReward(await liveJson(`/rewards/${encodeURIComponent(id)}`, { token }));
     },
     async claimReward(id) {
       const claim = mapClaim(
@@ -237,14 +239,11 @@ function liveClient(session) {
           token,
         })
       );
-      // Claim responses are reward-claim resources — reload rewards + achievements.
-      const [achievements, rewardsPage] = await Promise.all([
+      // Claim responses are reward-claim resources — reload the claimed reward + achievements.
+      const [achievements, reward] = await Promise.all([
         this.getAchievements(),
-        this.listRewards({ page: 1, pageSize: 100 }),
+        this.getReward(id),
       ]);
-      const reward =
-        rewardsPage.items.find((entry) => entry.id === String(id)) ||
-        mapReward({ id, attributes: { name: "", point_cost: claim.pointsSpent || 0 } });
       return { claim, reward, achievements };
     },
     async createReward(fields) {
@@ -277,12 +276,21 @@ function demoClient(session) {
   return {
     isDemo: true,
     getAchievements: () => demoGetAchievements(session.userId),
-    listRewards: async () => {
+    listRewards: async ({ page = 1, pageSize = 20 } = {}) => {
       const items = await demoListRewards(session.userId);
+      const totalItems = items.length;
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize) || 1);
+      const start = (page - 1) * pageSize;
       return {
-        items,
-        page: { number: 1, size: items.length || 20, total_items: items.length, total_pages: 1 },
+        items: items.slice(start, start + pageSize),
+        page: { number: page, size: pageSize, totalItems, totalPages },
       };
+    },
+    getReward: async (id) => {
+      const items = await demoListRewards(session.userId);
+      const found = items.find((entry) => entry.id === String(id));
+      if (!found) throw new ApiError("Reward not found.", 404, {}, "reward_not_found");
+      return found;
     },
     claimReward: async (id) => {
       const result = await demoClaimReward(id, session.userId);

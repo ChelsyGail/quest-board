@@ -357,6 +357,27 @@ export function demoJoinItem(itemId, userId) {
   return delay({ ...participation });
 }
 
+export function demoLeaveItem(itemId, userId) {
+  const store = readStore();
+  const participations = userParticipations(store, userId);
+  const participation = participations.find((entry) => entry.itemId === String(itemId));
+  if (!participation) {
+    return demoError("You are not joined to this item.", 404, "not_joined");
+  }
+  if (participation.status !== "joined") {
+    return demoError(
+      "You cannot leave an item you have already submitted proof for.",
+      409,
+      "proof_already_submitted"
+    );
+  }
+  store.participationsByUser[userId] = participations.filter(
+    (entry) => entry.itemId !== String(itemId)
+  );
+  writeStore(store);
+  return delay(null);
+}
+
 // Used by the Sprint 5 proof demo so My Quests shows Pending/Approved/Rejected.
 export function demoSetParticipationStatus(userId, itemId, status) {
   const store = readStore();

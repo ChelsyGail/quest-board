@@ -4,6 +4,7 @@ import {
   demoCreateQuest,
   demoGetItem,
   demoJoinItem,
+  demoLeaveItem,
   demoListMyItems,
   demoListMyParticipations,
   demoListPublishedItems,
@@ -36,6 +37,16 @@ export const POINT_VALUE_MAX = 10000;
 
 export const REQUESTABLE_ROLES = ["organizer", "moderator"];
 export const ROLE_REQUEST_STATUSES = ["pending", "approved", "rejected"];
+
+export function normalizePageMeta(page, { number = 1, size = 20, itemCount = 0 } = {}) {
+  const raw = page || {};
+  return {
+    number: Number(raw.number ?? number) || number,
+    size: Number(raw.size ?? size) || size,
+    totalItems: Number(raw.total_items ?? raw.totalItems ?? itemCount) || 0,
+    totalPages: Math.max(1, Number(raw.total_pages ?? raw.totalPages ?? 1) || 1),
+  };
+}
 
 // Read on every call so tests can change it.
 export function roleRequestsEnabled() {
@@ -162,7 +173,7 @@ export function formErrorsFrom(error, fieldNames) {
 
 // Returns the response's `data`, or the whole JSON:API document with `document: true`
 // (for `meta` such as page totals).
-async function request(path, { method = "GET", body, token, document = false } = {}) {
+async function request(path, { method = "GET", body, token, document = false, emptyOk = false } = {}) {
   if (!API_BASE_URL) {
     throw new ApiError(
       "The API URL is not configured. Copy .env.example to .env and restart the dev server.",
@@ -207,6 +218,9 @@ async function request(path, { method = "GET", body, token, document = false } =
   if (!response.ok) {
     const { message, fieldErrors, code } = readErrors(data, response.status);
     throw new ApiError(message, response.status, fieldErrors, code);
+  }
+  if (emptyOk && (response.status === 204 || data == null)) {
+    return null;
   }
   if (!data || !data.data) {
     throw new ApiError("The server returned an unexpected response.", response.status);
@@ -519,6 +533,13 @@ export async function joinItem(itemId, token) {
   return readParticipation(await request(path, { method: "POST", token }));
 }
 
+// DELETE /items/{id}/join -> leave a quest or cancel an event RSVP (204).
+// 409 "proof_already_submitted" after any proof attempt; 404 "not_joined" when absent.
+export async function leaveItem(itemId, token) {
+  const path = `/items/${encodeURIComponent(itemId)}/join`;
+  await request(path, { method: "DELETE", token, emptyOk: true });
+}
+
 // GET /me/participations -> everything the signed-in user joined or saved, as
 // [{ item, participation, saved }]. `participation` is null for an item only saved.
 export async function listMyParticipations(token) {
@@ -555,6 +576,7 @@ export function getQuestClient(session) {
       createQuest: (fields) => demoCreateQuest(fields),
       publishItem: (itemId) => demoPublishItem(itemId),
       joinItem: (itemId) => demoJoinItem(itemId, session.userId),
+      leaveItem: (itemId) => demoLeaveItem(itemId, session.userId),
       listMyParticipations: () => demoListMyParticipations(session.userId),
     };
   }
@@ -567,6 +589,7 @@ export function getQuestClient(session) {
     createQuest: (fields) => createQuest(fields, session.token),
     publishItem: (itemId) => publishItem(itemId, session.token),
     joinItem: (itemId) => joinItem(itemId, session.token),
+    leaveItem: (itemId) => leaveItem(itemId, session.token),
     listMyParticipations: () => listMyParticipations(session.token),
   };
 }

@@ -4,8 +4,10 @@ import {
   canPreviewVideo,
   canSubmitProof,
   getProofClient,
+  isNewerSubmission,
   proofsMode,
   proofsUnavailableMessage,
+  revokeSubmissionMediaUrls,
   submissionStatusLabel,
   validateProofDraft,
 } from "./proofs.js";
@@ -59,8 +61,17 @@ function ProofSubmit({
   const [reloadKey, setReloadKey] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const loadedKeyRef = useRef(null);
+  const existingRef = useRef(null);
 
   const lookupKey = mode === "live" ? participationId || "" : item?.id || "";
+
+  function replaceExisting(next) {
+    setExisting((current) => {
+      revokeSubmissionMediaUrls(current);
+      existingRef.current = next;
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!client || !item) {
@@ -72,7 +83,7 @@ function ProofSubmit({
     if (mode === "live" && !participationId) {
       setLoadStatus("ready");
       setRequirements(null);
-      setExisting(null);
+      replaceExisting(null);
       onProofStateRef.current?.(null);
       setLoadError("");
       return undefined;
@@ -89,9 +100,12 @@ function ProofSubmit({
           client.requirementsForItem(item),
           client.getMySubmission(lookupKey),
         ]);
-        if (cancelled) return;
+        if (cancelled) {
+          revokeSubmissionMediaUrls(submission);
+          return;
+        }
         setRequirements(reqs);
-        setExisting(submission);
+        replaceExisting(submission);
         onProofStateRef.current?.(submission);
         if (submission?.status === "rejected") {
           setText(submission.text || "");
@@ -114,6 +128,13 @@ function ProofSubmit({
   }, [session.token, session.userId, item?.id, lookupKey, client, reloadKey, mode, participationId]);
 
   useEffect(() => () => revokeUrls(photos), [photos]);
+  useEffect(
+    () => () => {
+      revokeSubmissionMediaUrls(existingRef.current);
+      existingRef.current = null;
+    },
+    []
+  );
 
   if (!client) {
     return (
@@ -191,6 +212,7 @@ function ProofSubmit({
     const userId = session.userId;
     const itemId = item.id;
     const submitKey = lookupKey;
+    const previous = existing;
     try {
       const activeClient = getProofClient({
         token: session.token,
@@ -210,7 +232,7 @@ function ProofSubmit({
         }
       );
       if (userId !== session.userId || itemId !== item.id) return;
-      setExisting(submission);
+      replaceExisting(submission);
       onProofState?.(submission);
       setNotice("Proof submitted. Status: Pending review.");
       setPhotos([]);
@@ -223,23 +245,37 @@ function ProofSubmit({
         onExpiredRef.current?.();
         return;
       }
-      if (error.resultUnknown || error.reconcileHint) {
+      if (error.uploadStage) {
+        setFormError(
+          "The upload didn't finish, so your proof was not submitted. You can try again — successful uploads are kept for retry."
+        );
+        return;
+      }
+      if (error.reconcileHint) {
         try {
           const again = await client.getMySubmission(submitKey);
-          if (again) {
-            setExisting(again);
+          if (isNewerSubmission(again, previous)) {
+            replaceExisting(again);
             onProofState?.(again);
             setNotice(
               "Proof was recorded. Status: " + submissionStatusLabel(again.status) + "."
             );
+            setPhotos([]);
+            setVideo(null);
             onSubmitted?.(again);
             return;
           }
         } catch {
-          // Fall through.
+          // Fall through to unresolved.
         }
         setFormError(
-          "We couldn't confirm whether your proof was saved. Check this page again before submitting another one."
+          "We couldn't confirm whether your latest proof attempt was saved. Your draft and uploads are still here — check this page again before submitting another one."
+        );
+        return;
+      }
+      if (error.resultUnknown) {
+        setFormError(
+          "We couldn't confirm the server response. Your proof may not have been submitted — check this page again before trying again."
         );
         return;
       }
@@ -297,16 +333,22 @@ function ProofSubmit({
             Text <span className="proof-req-flag">Required</span>
           </li>
         )}
-        {requirements.requiresPhoto && (
+        {requirements.requiresMedia && (
+          <li>
+            Photo or video <span className="proof-req-flag">Required</span>
+          </li>
+        )}
+        {requirements.requiresPhoto && !requirements.requiresMedia && (
           <li>
             Photo <span className="proof-req-flag">Required</span>
           </li>
         )}
-        {requirements.requiresVideo ? (
+        {requirements.requiresVideo && (
           <li>
             Video <span className="proof-req-flag">Required</span>
           </li>
-        ) : (
+        )}
+        {!requirements.requiresMedia && !requirements.requiresVideo && (
           <li>
             Video <span className="muted small">Optional</span>
           </li>
@@ -328,22 +370,50 @@ function ProofSubmit({
             <p>Awarded points: {existing.awardedPoints}</p>
           )}
           {existing.photos?.length > 0 && (
-            <ul className="proof-attached-meta" aria-label="Attached photos">
-              {existing.photos.map((photo) => (
-                <li key={photo.id}>
-                  {photo.name}
-                  {photo.previewUnavailable && (
-                    <span className="muted small"> — preview unavailable (private media)</span>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <div>
+              <h4 className="small-title">Submitted photos</h4>
+              <ul className="proof-preview-list" aria-label="Submitted photos">
+                {existing.photos.map((photo) => (
+                  <li key={photo.id}>
+                    {photo.url ? (
+                      <img
+                        src={photo.url}
+                        alt={photo.name || "Submitted proof photo"}
+                      />
+                    ) : (
+                      <div className="proof-preview-fallback">
+                        <span className="proof-filename">{photo.name || "Photo"}</span>
+                        <span className="muted small">
+                          {photo.previewUnavailable
+                            ? "Preview unavailable"
+                            : "Unsupported format for preview"}
+                        </span>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {existing.video && (
-            <p className="muted small">
-              Video: {existing.video.name}
-              {existing.video.previewUnavailable && " — preview unavailable (private media)"}
-            </p>
+            <div>
+              <h4 className="small-title">Submitted video</h4>
+              {existing.video.url ? (
+                <video
+                  src={existing.video.url}
+                  controls
+                  width="360"
+                  aria-label={existing.video.name || "Submitted proof video"}
+                />
+              ) : (
+                <p className="muted small">
+                  {existing.video.name || "Video"} —{" "}
+                  {existing.video.previewUnavailable
+                    ? "preview unavailable"
+                    : "unsupported format for preview"}
+                </p>
+              )}
+            </div>
           )}
         </div>
       )}

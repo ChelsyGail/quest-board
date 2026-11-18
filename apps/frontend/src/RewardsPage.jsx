@@ -121,9 +121,11 @@ function RewardsPage({ session, onSessionExpired }) {
   const [claimingId, setClaimingId] = useState(null);
   const [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageMeta, setPageMeta] = useState({ number: 1, size: 20, totalItems: 0, totalPages: 1 });
   const loadGen = useRef(0);
 
-  async function reload({ soft = false } = {}) {
+  async function reload({ soft = false, pageNumber = page } = {}) {
     if (!client) return;
     const gen = ++loadGen.current;
     const userId = session.userId;
@@ -135,11 +137,20 @@ function RewardsPage({ session, onSessionExpired }) {
     try {
       const [ach, listResult] = await Promise.all([
         client.getAchievements(),
-        client.listRewards(),
+        client.listRewards({ page: pageNumber, pageSize: 20 }),
       ]);
       if (gen !== loadGen.current || userId !== session.userId) return;
       setAchievements(ach);
-      setRewards(Array.isArray(listResult) ? listResult : listResult.items || []);
+      const items = Array.isArray(listResult) ? listResult : listResult.items || [];
+      const meta = listResult?.page || {
+        number: pageNumber,
+        size: 20,
+        totalItems: items.length,
+        totalPages: 1,
+      };
+      setRewards(items);
+      setPageMeta(meta);
+      setPage(meta.number || pageNumber);
       setStatus("ready");
       setError("");
     } catch (err) {
@@ -162,7 +173,7 @@ function RewardsPage({ session, onSessionExpired }) {
     }
     let cancelled = false;
     (async () => {
-      await reload({ soft: false });
+      await reload({ soft: false, pageNumber: page });
       if (cancelled) {
         // reload already finished; generation guard handles stale writes
       }
@@ -171,8 +182,8 @@ function RewardsPage({ session, onSessionExpired }) {
       cancelled = true;
       loadGen.current += 1;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when identity changes
-  }, [client, session.userId, session.token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when identity/page changes
+  }, [client, session.userId, session.token, page]);
 
   if (!client) {
     return (
@@ -270,39 +281,66 @@ function RewardsPage({ session, onSessionExpired }) {
           {rewards.length === 0 ? (
             <p className="muted">No rewards published yet.</p>
           ) : (
-            <ul className="rewards-list">
-              {rewards.map((reward) => (
-                <li key={reward.id} className="reward-card">
-                  <div>
-                    <h3 className="small-title">{reward.title}</h3>
-                    <p>{reward.description}</p>
-                    <p className="muted small">
-                      Cost: {reward.costPoints} pts · {reward.requirements}
-                    </p>
-                    {reward.missing?.length > 0 && (
-                      <p className="muted small">Still needed: {reward.missing.join("; ")}</p>
-                    )}
-                    <p>
-                      <span className={`badge status-${reward.eligibility}`}>
-                        {eligibilityLabel(reward.eligibility)}
-                      </span>
-                    </p>
-                  </div>
+            <>
+              <ul className="rewards-list">
+                {rewards.map((reward) => (
+                  <li key={reward.id} className="reward-card">
+                    <div>
+                      <h3 className="small-title">{reward.title}</h3>
+                      <p>{reward.description}</p>
+                      <p className="muted small">
+                        Cost: {reward.costPoints} pts · {reward.requirements}
+                      </p>
+                      {reward.missing?.length > 0 && (
+                        <p className="muted small">Still needed: {reward.missing.join("; ")}</p>
+                      )}
+                      <p>
+                        <span className={`badge status-${reward.eligibility}`}>
+                          {eligibilityLabel(reward.eligibility)}
+                        </span>
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="button button-small"
+                      disabled={reward.eligibility !== "eligible" || claimingId === reward.id}
+                      onClick={() => claim(reward.id)}
+                    >
+                      {claimingId === reward.id
+                        ? "Claiming…"
+                        : reward.claimed
+                          ? "Claimed"
+                          : "Claim"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {pageMeta.totalPages > 1 && (
+                <nav className="pagination" aria-label="Reward pages">
                   <button
                     type="button"
-                    className="button button-small"
-                    disabled={reward.eligibility !== "eligible" || claimingId === reward.id}
-                    onClick={() => claim(reward.id)}
+                    className="button button-secondary button-small"
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    disabled={page <= 1 || refreshing || claimingId}
                   >
-                    {claimingId === reward.id
-                      ? "Claiming…"
-                      : reward.claimed
-                        ? "Claimed"
-                        : "Claim"}
+                    Previous
                   </button>
-                </li>
-              ))}
-            </ul>
+                  <span className="small muted">
+                    Page {pageMeta.number} of {pageMeta.totalPages} · {pageMeta.totalItems} rewards
+                  </span>
+                  <button
+                    type="button"
+                    className="button button-secondary button-small"
+                    onClick={() =>
+                      setPage((current) => Math.min(pageMeta.totalPages, current + 1))
+                    }
+                    disabled={page >= pageMeta.totalPages || refreshing || claimingId}
+                  >
+                    Next
+                  </button>
+                </nav>
+              )}
+            </>
           )}
         </>
       )}

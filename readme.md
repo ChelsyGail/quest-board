@@ -66,8 +66,12 @@ Delete abandoned uploads (BE-43):
 
 ```bash
 make cleanup-uploads
-# equivalent: cd apps/backend/src && poetry run python -m jobs.cleanup_uploads
+# Loads .devcontainer/.env (required) so MYSQL_* / PROOF_MEDIA_DIR are explicit.
+# Or: cd apps/backend/src && set -a && . ../../../.devcontainer/.env && set +a \
+#      && poetry run python -m jobs.cleanup_uploads
 ```
+
+`make db-schema` and `make cleanup-uploads` refuse to run without `.devcontainer/.env` (or an alternate path via `DEVCONTAINER_ENV=...`) so they do not silently target an unintended database.
 
 ### Durable private media (deployment note)
 
@@ -112,12 +116,14 @@ Live RC example: quests/proofs/moderation/rewards API on; **both** discussion fl
 cd apps/frontend && npm test -- --run
 cd apps/frontend && npm run build
 
-# Backend unit (no DB)
-cd apps/backend && poetry run pytest tests/ -q
+# Backend unit (no DB) — install the Poetry dev group first (pytest, httpx)
+cd apps/backend && poetry install --with dev
+poetry run pytest tests/ -q
 
-# Backend integration (MySQL up)
-export QUESTBOARD_INTEGRATION=1 MYSQL_HOST=127.0.0.1 ...
-poetry run pytest tests/test_integration_db.py -q
+# Backend integration (MySQL up; load .devcontainer/.env so the DB is explicit)
+cd apps/backend && set -a && . ../../.devcontainer/.env && set +a
+export QUESTBOARD_INTEGRATION=1 MYSQL_HOST=127.0.0.1 MYSQL_DATABASE=questboard_review
+poetry run pytest tests/ -q
 ```
 
 ## Twists

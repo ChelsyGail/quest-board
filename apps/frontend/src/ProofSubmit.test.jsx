@@ -76,4 +76,25 @@ describe("ProofSubmit", () => {
     expect(screen.getByLabelText(/Proof text/i)).toHaveValue("Keep this draft.");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
+
+  it("labels structured media as photo or video required", async () => {
+    vi.stubEnv("VITE_PROOFS_DEMO", "true");
+    await demoJoinItem("demo-1", SESSION.userId);
+    render(
+      <ProofSubmit
+        session={SESSION}
+        item={{
+          ...ITEM,
+          requiresTextProof: true,
+          requiresMediaProof: true,
+          proofInstructions: "Text and media.",
+        }}
+        participationStatus="joined"
+      />
+    );
+    const reqs = await screen.findByLabelText(/Proof requirements/i);
+    expect(reqs).toHaveTextContent(/Photo or video/i);
+    expect(reqs).toHaveTextContent(/Required/i);
+    expect(reqs.textContent).not.toMatch(/\bPhoto\s+Required\b/);
+  });
 });

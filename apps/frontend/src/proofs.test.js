@@ -3,6 +3,7 @@ import {
   canSubmitProof,
   getProofClient,
   inferRequirements,
+  isNewerSubmission,
   proofsDemoEnabled,
   proofsMode,
   validateProofDraft,
@@ -26,8 +27,35 @@ describe("proof helpers", () => {
     });
     expect(structured.requiresText).toBe(true);
     expect(structured.requiresMedia).toBe(true);
-    expect(structured.requiresPhoto).toBe(true);
+    expect(structured.requiresPhoto).toBe(false);
+    expect(structured.requiresVideo).toBe(false);
     expect(structured.structuredRequirementsSupported).toBe(true);
+  });
+
+  it("accepts either a photo or a video when media is required", () => {
+    const requirements = {
+      requiresText: false,
+      requiresMedia: true,
+      requiresPhoto: false,
+      requiresVideo: false,
+      maxMedia: 5,
+      maxPhotos: 5,
+      maxPhotoBytes: 1000,
+      maxVideoBytes: 1000,
+      allowedPhotoTypes: ["image/png"],
+      allowedVideoTypes: ["video/mp4"],
+    };
+    expect(
+      validateProofDraft(requirements, { text: "", photos: [], video: null }).photos
+    ).toMatch(/photo or video/i);
+    const photo = new File([new Uint8Array(10)], "shot.png", { type: "image/png" });
+    expect(
+      Object.keys(validateProofDraft(requirements, { text: "", photos: [photo], video: null }))
+    ).toEqual([]);
+    const video = new File([new Uint8Array(10)], "clip.mp4", { type: "video/mp4" });
+    expect(
+      Object.keys(validateProofDraft(requirements, { text: "", photos: [], video }))
+    ).toEqual([]);
   });
 
   it("validates basic text-or-media and combined file limits", () => {
@@ -60,6 +88,20 @@ describe("proof helpers", () => {
     expect(canSubmitProof("rejected")).toBe(true);
     expect(canSubmitProof("pending")).toBe(false);
     expect(canSubmitProof("approved")).toBe(false);
+  });
+
+  it("treats only a newer submission identity or attempt as successful reconcile", () => {
+    expect(isNewerSubmission(null, { id: "1", attemptNumber: 1 })).toBe(false);
+    expect(isNewerSubmission({ id: "1", attemptNumber: 1 }, null)).toBe(true);
+    expect(
+      isNewerSubmission({ id: "1", attemptNumber: 1 }, { id: "1", attemptNumber: 1 })
+    ).toBe(false);
+    expect(
+      isNewerSubmission({ id: "2", attemptNumber: 2 }, { id: "1", attemptNumber: 1 })
+    ).toBe(true);
+    expect(
+      isNewerSubmission({ id: "1", attemptNumber: 2 }, { id: "1", attemptNumber: 1 })
+    ).toBe(true);
   });
 });
 

@@ -76,14 +76,34 @@ function serializeFiles(photos, video) {
 }
 
 export function demoRequirementsForItem(item) {
-  // Demo keeps soft hints from instruction text for a richer mock; live mode
-  // uses basicRequirements and does not invent mandatory photo/video flags.
+  // Prefer structured catalogue flags when present (same semantics as live).
+  if (item?.requiresTextProof != null || item?.requiresMediaProof != null) {
+    const requiresText = Boolean(item.requiresTextProof);
+    const requiresMedia = Boolean(item.requiresMediaProof);
+    return {
+      instructions: item?.proofInstructions || "",
+      requiresText,
+      requiresMedia,
+      requiresPhoto: false,
+      requiresVideo: false,
+      maxMedia: MAX_MEDIA,
+      maxPhotos: MAX_PHOTOS,
+      maxPhotoBytes: MAX_PHOTO_BYTES,
+      maxVideoBytes: MAX_VIDEO_BYTES,
+      allowedPhotoTypes: PHOTO_TYPES,
+      allowedVideoTypes: VIDEO_TYPES,
+      pointValue: item?.pointValue ?? null,
+      structuredRequirementsSupported: true,
+    };
+  }
+  // Legacy demo soft hints from instruction text for richer mock quests.
   const instructions = (item?.proofInstructions || "").toLowerCase();
   const mentionsPhoto = /photo|image|picture|pic\b/.test(instructions);
   const mentionsVideo = /video|clip|recording/.test(instructions);
   return {
     instructions: item?.proofInstructions || "",
     requiresText: true,
+    requiresMedia: false,
     requiresPhoto: mentionsPhoto || !mentionsVideo,
     requiresVideo: mentionsVideo,
     maxMedia: MAX_MEDIA,
@@ -103,7 +123,11 @@ function validateDraft(requirements, { text, photos, video }) {
   const photoList = photos || [];
   const mediaCount = photoList.length + (video ? 1 : 0);
   if (requirements.requiresText && !trimmed) errors.text = "Add the text your quest asks for.";
-  if (requirements.requiresPhoto && !photoList.length) errors.photos = "Add at least one photo.";
+  if (requirements.requiresMedia && mediaCount === 0) {
+    errors.photos = "Add at least one photo or video.";
+  } else if (requirements.requiresPhoto && !requirements.requiresMedia && !photoList.length) {
+    errors.photos = "Add at least one photo.";
+  }
   if (photoList.length > requirements.maxPhotos) {
     errors.photos = `You can attach at most ${requirements.maxPhotos} photos.`;
   }

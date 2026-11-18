@@ -68,6 +68,7 @@ function QuestBoard({
   const [selected, setSelected] = useState(initialItem);
   const [detail, setDetail] = useState({ status: "idle", item: null });
   const [isJoining, setIsJoining] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   // Authoritative proof submission for the open quest (from ProofSubmit), not guessed from join status.
@@ -243,6 +244,80 @@ function QuestBoard({
 
   function markJoined(itemId, participation) {
     setParticipations((current) => new Map(current).set(itemId, participation));
+  }
+
+  function markLeft(itemId) {
+    setParticipations((current) => {
+      const next = new Map(current);
+      next.delete(itemId);
+      return next;
+    });
+    setProofByItem((current) => {
+      const next = new Map(current);
+      next.delete(itemId);
+      return next;
+    });
+  }
+
+  function canLeaveParticipation(item, participation, proofSubmission) {
+    if (!participation) return false;
+    if (proofSubmission && ["pending", "rejected", "approved"].includes(proofSubmission.status)) {
+      return false;
+    }
+    if (item.kind === "event") return participation.status === "joined";
+    return participation.status === "joined";
+  }
+
+  async function handleLeave(item) {
+    if (isLeaving || isJoining || !participations.has(item.id)) return;
+    if (Date.now() >= Date.parse(session.expiresAt)) {
+      onSessionExpired();
+      return;
+    }
+    const leaveLabel =
+      item.kind === "event" ? `Cancel RSVP for "${item.title}"?` : `Leave "${item.title}"?`;
+    if (!window.confirm(`${leaveLabel} Your place will be removed if you haven't submitted proof.`)) {
+      return;
+    }
+    setIsLeaving(true);
+    setActionError("");
+    setActionMessage("");
+    try {
+      await client.leaveItem(item.id);
+      markLeft(item.id);
+      setActionMessage(
+        item.kind === "event"
+          ? `RSVP cancelled for "${item.title}".`
+          : `You left "${item.title}".`
+      );
+    } catch (error) {
+      if (error.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      if (error.status === 409 && error.code === "proof_already_submitted") {
+        setActionError(
+          `You can't leave "${item.title}" after submitting proof. Your participation and proof history stay on record.`
+        );
+        setParticipationAttempt((attempt) => attempt + 1);
+      } else if (error.status === 404 && (error.code === "not_joined" || error.code === "not_found")) {
+        markLeft(item.id);
+        setActionMessage(`You're not joined to "${item.title}".`);
+        setParticipationAttempt((attempt) => attempt + 1);
+      } else if (error.resultUnknown) {
+        setActionError(
+          `We couldn't confirm whether you left "${item.title}". Reload My Quests before trying again.`
+        );
+        setParticipationAttempt((attempt) => attempt + 1);
+      } else {
+        setActionError(
+          `Couldn't leave "${item.title}". ` +
+            questApiUnavailableMessage(error, `leave "${item.title}"`)
+        );
+      }
+    } finally {
+      setIsLeaving(false);
+    }
   }
 
   async function checkWhetherJoined(item, error, { successMessage } = {}) {
@@ -479,6 +554,32 @@ function QuestBoard({
         {!joined && participationStatus === "error" && (
           <p className="hint">We couldn't check whether you've already joined this one.</p>
         )}
+        {joined &&
+          canJoin &&
+          canLeaveParticipation(shown, participation, proofSubmission) && (
+            <section className="panel">
+              <h3 className="section-title">{isQuest ? "Leave quest" : "Cancel RSVP"}</h3>
+              <p className="hint">
+                {isQuest
+                  ? "You can leave before submitting proof. After proof is submitted, your place stays on record."
+                  : "Cancel your RSVP if you can no longer attend."}
+              </p>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => handleLeave(shown)}
+                disabled={isLeaving || isJoining}
+              >
+                {isLeaving
+                  ? isQuest
+                    ? "Leaving…"
+                    : "Cancelling…"
+                  : isQuest
+                    ? "Leave quest"
+                    : "Cancel RSVP"}
+              </button>
+            </section>
+          )}
         {isQuest && canJoin && joined && (
           <ProofSubmit
             session={{
