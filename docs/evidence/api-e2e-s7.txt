@@ -1,5 +1,6 @@
 Candidate branch: taha-final-sprint-integration
-Evidence captured before commit; SHA filled in follow-up note.
+Feature candidate SHA: a258346aae550a3ad67b9427b4e59ae50eb6cb69
+Validate git rev-parse HEAD after fetch (docs-only stamp commits may sit on tip).
 
 REG Student 201 id=47
 REG Organizer 201 id=48
