@@ -21,6 +21,8 @@ from services.recognition_service import load_balance
 from services.recognition_service import PointBalance
 from sqlalchemy import text
 from utilities.settings import DatabaseSettings
+from utilities.transactions import begin_read_committed
+from utilities.transactions import with_deadlock_retry
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,14 @@ class InvalidRuleQuestError(Exception):
     """A quest_completed rule must name one of the organizer's own quests."""
 
 
+class RewardNotEligibleError(Exception):
+    """The student does not meet the reward's eligibility rule (BE-59)."""
+
+    def __init__(self, missing: list[str]):
+        super().__init__(missing)
+        self.missing = missing
+
+
 @dataclass(frozen=True)
 class RewardRecord:
     reward_id: int
@@ -47,6 +57,16 @@ class RewardRecord:
     point_cost: int
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class ClaimRecord:
+    reward_claim_id: int
+    reward_id: int
+    user_id: int
+    points_spent: int
+    claimed_at: datetime
+    available_points: int | None = None
 
 
 @dataclass(frozen=True)
@@ -233,6 +253,87 @@ class RewardService:
             for record in records
         ]
 
+    def claim_reward(self, reward_id: int, user_id: int) -> ClaimRecord:
+        """BE-59: recheck eligibility and record the claim and any points debit
+        in one transaction. Retried a bounded number of times on a deadlock."""
+        logger.info(
+            "Claiming reward", extra={"reward_id": reward_id, "user_id": user_id}
+        )
+        return with_deadlock_retry(lambda: self._claim(reward_id, user_id))
+
+    def _claim(self, reward_id: int, user_id: int) -> ClaimRecord:
+        # READ COMMITTED (see utilities/transactions.py): every read below runs
+        # after the per-user lock and sees what other claims and approvals for
+        # this student have committed.
+        with begin_read_committed(self.engine) as connection:
+            # The per-user recognition lock, the same users row the approval
+            # transaction locks last. Claims take it first and lock nothing
+            # else for update, so the two cannot deadlock each other.
+            connection.execute(
+                text("SELECT user_id FROM users WHERE user_id = :user_id FOR UPDATE"),
+                {"user_id": user_id},
+            )
+            row = connection.execute(
+                text(SELECT_REWARD_COLUMNS + " WHERE reward_id = :reward_id FOR SHARE"),
+                {"reward_id": reward_id},
+            ).one_or_none()
+            if row is None:
+                raise RewardNotFoundError
+            reward = reward_record_from_row(row)
+
+            progress = evaluate(reward.rule, load_stats(connection, user_id))
+            if not progress.met:
+                logger.info(
+                    "Claim refused, not eligible",
+                    extra={"reward_id": reward_id, "user_id": user_id},
+                )
+                raise RewardNotEligibleError([progress.missing])
+
+            claim_id = connection.execute(
+                text(
+                    """
+                    INSERT INTO reward_claims (reward_id, user_id, points_spent)
+                    VALUES (:reward_id, :user_id, :points_spent)
+                    """
+                ),
+                {
+                    "reward_id": reward_id,
+                    "user_id": user_id,
+                    "points_spent": reward.point_cost,
+                },
+            ).lastrowid
+            if reward.point_cost > 0:
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO points_ledger
+                            (user_id, amount, reason, reward_claim_id)
+                        VALUES (:user_id, :amount, 'reward_claim', :claim_id)
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "amount": reward.point_cost,
+                        "claim_id": claim_id,
+                    },
+                )
+            claim_row = connection.execute(
+                text("SELECT * FROM reward_claims WHERE reward_claim_id = :id"),
+                {"id": claim_id},
+            ).one()
+            available = load_balance(connection, user_id).available_points
+
+        logger.info(
+            "Recorded reward claim",
+            extra={
+                "reward_claim_id": claim_id,
+                "reward_id": reward_id,
+                "user_id": user_id,
+                "points_spent": reward.point_cost,
+            },
+        )
+        return to_claim(claim_row, available)
+
     def update_reward(
         self, reward_id: int, actor_id: int, update: RewardUpdate
     ) -> RewardRecord:
@@ -288,8 +389,23 @@ class RewardService:
 def _claimed_reward_ids(
     connection, user_id: int, records: list[RewardRecord]
 ) -> set[int]:
-    # Claims arrive with BE-59; until then nothing has been claimed.
-    return set()
+    wanted = {record.reward_id for record in records}
+    rows = connection.execute(
+        text("SELECT reward_id FROM reward_claims WHERE user_id = :user_id"),
+        {"user_id": user_id},
+    ).all()
+    return {row.reward_id for row in rows} & wanted
+
+
+def to_claim(row, available_points: int | None = None) -> ClaimRecord:
+    return ClaimRecord(
+        reward_claim_id=row.reward_claim_id,
+        reward_id=row.reward_id,
+        user_id=row.user_id,
+        points_spent=row.points_spent,
+        claimed_at=from_utc_naive(row.created_at),
+        available_points=available_points,
+    )
 
 
 def _load_reward(connection, reward_id: int):

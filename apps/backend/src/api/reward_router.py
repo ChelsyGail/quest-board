@@ -6,9 +6,12 @@ from fastapi import FastAPI
 from fastapi import Path
 from fastapi import Query
 from fastapi import status
+from models.responses.reward import ClaimResponse
 from models.responses.reward import RewardErrorResponse
 from models.responses.reward import RewardListResponse
 from models.responses.reward import RewardResponse
+from models.reward import ClaimAttributes
+from models.reward import ClaimResourceData
 from models.reward import EligibilityRuleAttributes
 from models.reward import RewardAttributes
 from models.reward import RewardCreate
@@ -17,7 +20,9 @@ from models.reward import RewardUpdate
 from models.reward import RewardViewerStatus
 from models.reward import RuleProgressAttributes
 from models.users import UserRole
+from services.reward_service import ClaimRecord
 from services.reward_service import InvalidRuleQuestError
+from services.reward_service import RewardNotEligibleError
 from services.reward_service import RewardNotFoundError
 from services.reward_service import RewardOwnershipError
 from services.reward_service import RewardPage
@@ -39,6 +44,7 @@ def setup_reward_router(app: FastAPI, services: Services):
     router = APIRouter(prefix="/rewards", tags=["rewards"])
     get_current_user = build_current_user_dependency(services.auth_service)
     require_organizer = require_roles(get_current_user, UserRole.ORGANIZER)
+    require_student = require_roles(get_current_user, UserRole.STUDENT)
 
     @router.post(
         "",
@@ -106,6 +112,41 @@ def setup_reward_router(app: FastAPI, services: Services):
             return reward_not_found()
         return RewardResponse(data=_to_viewed_resource(view))
 
+    @router.post(
+        "/{reward_id}/claims",
+        response_model=ClaimResponse,
+        response_model_exclude_none=True,
+        status_code=status.HTTP_201_CREATED,
+        responses={
+            401: {"model": RewardErrorResponse},
+            403: {"model": RewardErrorResponse},
+            404: {"model": RewardErrorResponse},
+            409: {"model": RewardErrorResponse},
+        },
+    )
+    def claim_reward(
+        reward_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(require_student),
+    ):
+        """BE-59: claim a reward. Eligibility is checked again on the server,
+        and the claim and any points it spends commit together."""
+        try:
+            claim = services.reward_service.claim_reward(
+                reward_id, current_user.user_id
+            )
+        except RewardNotFoundError:
+            return reward_not_found()
+        except RewardNotEligibleError as error:
+            return json_api_error_response(
+                RewardErrorResponse,
+                status.HTTP_409_CONFLICT,
+                "reward_not_eligible",
+                "Not eligible for this reward",
+                "Still needed: " + "; ".join(error.missing) + ".",
+                "/reward_id",
+            )
+        return ClaimResponse(data=to_claim_resource(claim))
+
     @router.patch(
         "/{reward_id}",
         response_model=RewardResponse,
@@ -159,6 +200,19 @@ def to_reward_attributes(record: RewardRecord) -> RewardAttributes:
 def to_reward_resource(record: RewardRecord) -> RewardResourceData:
     return RewardResourceData(
         id=str(record.reward_id), attributes=to_reward_attributes(record)
+    )
+
+
+def to_claim_resource(claim: ClaimRecord) -> ClaimResourceData:
+    return ClaimResourceData(
+        id=str(claim.reward_claim_id),
+        attributes=ClaimAttributes(
+            reward_id=str(claim.reward_id),
+            user_id=str(claim.user_id),
+            points_spent=claim.points_spent,
+            claimed_at=claim.claimed_at,
+            available_points=claim.available_points,
+        ),
     )
 
 

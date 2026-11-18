@@ -125,3 +125,20 @@ class RewardResourceData(BaseModel):
     type: Literal["rewards"] = "rewards"
     id: str
     attributes: RewardAttributes
+
+
+class ClaimAttributes(BaseModel):
+    reward_id: str
+    user_id: str
+    # What the claim spent; 0 for a free reward.
+    points_spent: int
+    claimed_at: datetime
+    # The claimant's spendable points right after the claim. Only on the
+    # claim response itself.
+    available_points: int | None = None
+
+
+class ClaimResourceData(BaseModel):
+    type: Literal["reward-claims"] = "reward-claims"
+    id: str
+    attributes: ClaimAttributes
