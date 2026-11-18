@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi import Path
 from fastapi import Query
 from fastapi import status
+from models.responses.reward import ClaimListResponse
 from models.responses.reward import ClaimResponse
 from models.responses.reward import RewardErrorResponse
 from models.responses.reward import RewardListResponse
@@ -168,6 +169,35 @@ def setup_reward_router(app: FastAPI, services: Services):
             )
         return ClaimResponse(data=to_claim_resource(claim))
 
+    @router.get(
+        "/{reward_id}/claims",
+        response_model=ClaimListResponse,
+        response_model_exclude_none=True,
+        responses={
+            401: {"model": RewardErrorResponse},
+            403: {"model": RewardErrorResponse},
+            404: {"model": RewardErrorResponse},
+        },
+    )
+    def list_claims(
+        reward_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        """BE-63: the reward's owner sees who claimed it and when. Anyone else
+        gets 403."""
+        try:
+            claims = services.reward_service.list_claims(
+                reward_id, current_user.user_id
+            )
+        except RewardNotFoundError:
+            return reward_not_found()
+        except RewardOwnershipError:
+            return reward_not_owned()
+        return ClaimListResponse(
+            data=[to_claim_resource(claim) for claim in claims],
+            meta={"count": len(claims)},
+        )
+
     @router.patch(
         "/{reward_id}",
         response_model=RewardResponse,
@@ -230,6 +260,7 @@ def to_claim_resource(claim: ClaimRecord) -> ClaimResourceData:
         attributes=ClaimAttributes(
             reward_id=str(claim.reward_id),
             user_id=str(claim.user_id),
+            claimant_name=claim.claimant_name,
             points_spent=claim.points_spent,
             claimed_at=claim.claimed_at,
             available_points=claim.available_points,

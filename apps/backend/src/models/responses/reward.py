@@ -15,5 +15,9 @@ class ClaimResponse(JsonApiResponse[ClaimResourceData]):
     pass
 
 
+class ClaimListResponse(JsonApiResponse[ClaimResourceData]):
+    pass
+
+
 class RewardErrorResponse(JsonApiResponse[RewardResourceData]):
     pass

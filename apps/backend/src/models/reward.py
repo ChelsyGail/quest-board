@@ -130,6 +130,8 @@ class RewardResourceData(BaseModel):
 class ClaimAttributes(BaseModel):
     reward_id: str
     user_id: str
+    # Who claimed it. On the organizer's claims list (BE-63).
+    claimant_name: str | None = None
     # What the claim spent; 0 for a free reward.
     points_spent: int
     claimed_at: datetime

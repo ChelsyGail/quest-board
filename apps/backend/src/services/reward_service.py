@@ -81,6 +81,7 @@ class ClaimRecord:
     points_spent: int
     claimed_at: datetime
     available_points: int | None = None
+    claimant_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -375,6 +376,36 @@ class RewardService:
         )
         return to_claim(claim_row, available)
 
+    def list_claims(self, reward_id: int, actor_id: int) -> list[ClaimRecord]:
+        """BE-63: who claimed this reward and when, oldest first, so the
+        organizer can fulfil claims in order. Only the reward's owner."""
+        with self.engine.connect() as connection:
+            owner_id = connection.execute(
+                text("SELECT owner_id FROM rewards WHERE reward_id = :reward_id"),
+                {"reward_id": reward_id},
+            ).scalar_one_or_none()
+            if owner_id is None:
+                raise RewardNotFoundError
+            if owner_id != actor_id:
+                logger.warning(
+                    "Rejected claims list for another organizer's reward",
+                    extra={"reward_id": reward_id, "actor_id": actor_id},
+                )
+                raise RewardOwnershipError
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT c.*, u.name AS claimant_name
+                    FROM reward_claims AS c
+                    JOIN users AS u ON u.user_id = c.user_id
+                    WHERE c.reward_id = :reward_id
+                    ORDER BY c.created_at, c.reward_claim_id
+                    """
+                ),
+                {"reward_id": reward_id},
+            ).all()
+        return [to_claim(row, claimant_name=row.claimant_name) for row in rows]
+
     def update_reward(
         self, reward_id: int, actor_id: int, update: RewardUpdate
     ) -> RewardRecord:
@@ -451,7 +482,9 @@ def _has_claimed(connection, user_id: int, reward_id: int) -> bool:
     )
 
 
-def to_claim(row, available_points: int | None = None) -> ClaimRecord:
+def to_claim(
+    row, available_points: int | None = None, claimant_name: str | None = None
+) -> ClaimRecord:
     return ClaimRecord(
         reward_claim_id=row.reward_claim_id,
         reward_id=row.reward_id,
@@ -459,6 +492,7 @@ def to_claim(row, available_points: int | None = None) -> ClaimRecord:
         points_spent=row.points_spent,
         claimed_at=from_utc_naive(row.created_at),
         available_points=available_points,
+        claimant_name=claimant_name,
     )
 
 
