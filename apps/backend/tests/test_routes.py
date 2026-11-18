@@ -38,6 +38,8 @@ def make_item(**changes) -> ItemRecord:
         category="Volunteering",
         proof_instructions="A photo of your bag.",
         point_value=50,
+        requires_text_proof=True,
+        requires_media_proof=True,
         status=ItemStatus.PUBLISHED,
         published_at=NOW,
         archived_at=None,
@@ -85,8 +87,15 @@ def test_catalogue_and_participation_routes_are_registered(services):
         ("POST", "/items/{item_id}/join"),
         ("GET", "/me/participations"),
         ("POST", "/uploads"),
+        ("GET", "/media/{media_id}"),
         ("POST", "/participations/{participation_id}/submissions"),
         ("GET", "/participations/{participation_id}/submissions"),
+        ("GET", "/moderation/submissions"),
+        ("POST", "/moderation/submissions/{submission_id}/approve"),
+        ("POST", "/moderation/submissions/{submission_id}/reject"),
+        ("GET", "/users/me/achievements"),
+        ("GET", "/rewards"),
+        ("POST", "/rewards/{reward_id}/claims"),
     ]:
         assert route in routes
 

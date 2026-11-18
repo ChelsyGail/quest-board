@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   eligibilityLabel,
   getRewardsClient,
+  REWARD_RULE_TYPES,
   rewardsMode,
   rewardsUnavailableMessage,
 } from "./rewards.js";
@@ -132,10 +133,13 @@ function RewardsPage({ session, onSessionExpired }) {
       setError("");
     }
     try {
-      const [ach, list] = await Promise.all([client.getAchievements(), client.listRewards()]);
+      const [ach, listResult] = await Promise.all([
+        client.getAchievements(),
+        client.listRewards(),
+      ]);
       if (gen !== loadGen.current || userId !== session.userId) return;
       setAchievements(ach);
-      setRewards(list);
+      setRewards(Array.isArray(listResult) ? listResult : listResult.items || []);
       setStatus("ready");
       setError("");
     } catch (err) {
@@ -181,6 +185,14 @@ function RewardsPage({ session, onSessionExpired }) {
 
   async function claim(rewardId) {
     if (claimingId) return;
+    const reward = rewards.find((entry) => entry.id === rewardId);
+    if (
+      !window.confirm(
+        `Claim “${reward?.title || "this reward"}” for ${reward?.costPoints ?? "?"} points?`
+      )
+    ) {
+      return;
+    }
     const userId = session.userId;
     setClaimingId(rewardId);
     setNotice("");
@@ -189,10 +201,11 @@ function RewardsPage({ session, onSessionExpired }) {
       const result = await client.claimReward(rewardId);
       if (userId !== session.userId) return;
       setAchievements(result.achievements);
-      setRewards((current) =>
-        current.map((reward) => (reward.id === rewardId ? result.reward : reward))
+      // Prefer reloaded catalogue over interpreting the claim resource as a reward.
+      await reload({ soft: true });
+      setNotice(
+        `Claimed “${result.reward?.title || reward?.title || "reward"}”. Your spendable balance was updated.`
       );
-      setNotice(`Claimed “${result.reward.title}”. Your spendable balance was updated.`);
     } catch (err) {
       if (userId !== session.userId) return;
       if (err.status === 401) {
@@ -266,6 +279,9 @@ function RewardsPage({ session, onSessionExpired }) {
                     <p className="muted small">
                       Cost: {reward.costPoints} pts · {reward.requirements}
                     </p>
+                    {reward.missing?.length > 0 && (
+                      <p className="muted small">Still needed: {reward.missing.join("; ")}</p>
+                    )}
                     <p>
                       <span className={`badge status-${reward.eligibility}`}>
                         {eligibilityLabel(reward.eligibility)}
@@ -305,8 +321,10 @@ export function OrganizerRewards({ session, onSessionExpired }) {
     title: "",
     description: "",
     costPoints: "20",
-    requirements: "",
-    requiresApprovedQuest: true,
+    ruleType: "approved_quests",
+    threshold: "1",
+    category: "Volunteering",
+    questId: "",
   });
   const [status, setStatus] = useState(client ? "loading" : "unavailable");
   const [error, setError] = useState("");
@@ -371,8 +389,15 @@ export function OrganizerRewards({ session, onSessionExpired }) {
     setNotice("");
     try {
       const created = await client.createReward({
-        ...form,
+        name: form.title,
+        title: form.title,
+        description: form.description,
+        pointCost: Number(form.costPoints),
         costPoints: Number(form.costPoints),
+        ruleType: form.ruleType,
+        threshold: form.threshold,
+        category: form.category,
+        questId: form.questId,
       });
       if (userId !== session.userId) return;
       setMine((current) => [...current, created]);
@@ -381,8 +406,10 @@ export function OrganizerRewards({ session, onSessionExpired }) {
         title: "",
         description: "",
         costPoints: "20",
-        requirements: "",
-        requiresApprovedQuest: true,
+        ruleType: "approved_quests",
+        threshold: "1",
+        category: "Volunteering",
+        questId: "",
       });
     } catch (err) {
       if (userId !== session.userId) return;
@@ -462,24 +489,51 @@ export function OrganizerRewards({ session, onSessionExpired }) {
           />
         </label>
         <label className="field">
-          <span>Requirements</span>
-          <input
-            value={form.requirements}
-            onChange={(event) => setForm({ ...form, requirements: event.target.value })}
+          <span>Eligibility rule</span>
+          <select
+            value={form.ruleType}
+            onChange={(event) => setForm({ ...form, ruleType: event.target.value })}
             disabled={saving}
-          />
+          >
+            {REWARD_RULE_TYPES.map((rule) => (
+              <option key={rule.value} value={rule.value}>
+                {rule.label}
+              </option>
+            ))}
+          </select>
         </label>
-        <label className="field checkbox-field">
-          <input
-            type="checkbox"
-            checked={form.requiresApprovedQuest}
-            onChange={(event) =>
-              setForm({ ...form, requiresApprovedQuest: event.target.checked })
-            }
-            disabled={saving}
-          />
-          <span>Require at least one approved quest</span>
-        </label>
+        {(form.ruleType === "approved_quests" ||
+          form.ruleType === "total_points" ||
+          form.ruleType === "category_quests") && (
+          <label className="field">
+            <span>Threshold</span>
+            <input
+              value={form.threshold}
+              onChange={(event) => setForm({ ...form, threshold: event.target.value })}
+              disabled={saving}
+            />
+          </label>
+        )}
+        {form.ruleType === "category_quests" && (
+          <label className="field">
+            <span>Category</span>
+            <input
+              value={form.category}
+              onChange={(event) => setForm({ ...form, category: event.target.value })}
+              disabled={saving}
+            />
+          </label>
+        )}
+        {form.ruleType === "quest_completed" && (
+          <label className="field">
+            <span>Quest id</span>
+            <input
+              value={form.questId}
+              onChange={(event) => setForm({ ...form, questId: event.target.value })}
+              disabled={saving}
+            />
+          </label>
+        )}
         <button type="submit" className="button" disabled={saving}>
           {saving ? "Saving…" : "Create reward"}
         </button>
@@ -527,7 +581,7 @@ export function OrganizerRewards({ session, onSessionExpired }) {
             <ul>
               {claims.map((claim) => (
                 <li key={`${claim.userId}-${claim.claimedAt}`}>
-                  {claim.name || claim.userId} ·{" "}
+                  {claim.claimantName || claim.name || claim.userId} ·{" "}
                   {claim.claimedAt ? new Date(claim.claimedAt).toLocaleString() : ""}
                 </li>
               ))}

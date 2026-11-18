@@ -9,9 +9,9 @@ import pytest
 from api.app_factory import setup_app
 from fastapi.testclient import TestClient
 from models.users import UserRole
+from services.proof_service import AttemptPendingError
 from services.proof_service import MediaRecord
 from services.proof_service import NotYourParticipationError
-from services.proof_service import SubmissionConflictError
 from services.proof_service import SubmissionRecord
 from utilities.media_types import MediaKind
 from models.proof import SubmissionStatus
@@ -94,14 +94,14 @@ def test_submit_proof_returns_submission(client, services):
 
 
 def test_submit_conflict_returns_409(client, services):
-    services.proof_service.submit.side_effect = SubmissionConflictError
+    services.proof_service.submit.side_effect = AttemptPendingError
     response = client.post(
         "/participations/9/submissions",
         json={"text": "Again"},
         headers=AUTH,
     )
     assert response.status_code == 409
-    assert response.json()["errors"][0]["code"] == "submission_already_pending"
+    assert response.json()["errors"][0]["code"] == "attempt_pending"
 
 
 def test_list_submissions_rejects_other_student(client, services):

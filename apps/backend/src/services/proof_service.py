@@ -4,6 +4,8 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 
 from database.connection import create_database_engine
 from models.catalogue import ItemKind
@@ -11,12 +13,14 @@ from models.catalogue import ParticipationStatus
 from models.proof import SubmissionCreate
 from models.proof import SubmissionStatus
 from services.catalogue_service import from_utc_naive
+from services.catalogue_service import to_utc_naive
 from sqlalchemy import bindparam
 from sqlalchemy import text
 from utilities.media_types import ALLOWED_MEDIA_TYPES
 from utilities.media_types import content_matches
 from utilities.media_types import MAX_BYTES
 from utilities.media_types import MediaKind
+from utilities.object_store import ObjectNotFoundError
 from utilities.object_store import ObjectStore
 from utilities.settings import DatabaseSettings
 
@@ -31,21 +35,45 @@ class NotYourParticipationError(Exception):
     """Proof can only be submitted on, or read from, the student's own attempt."""
 
 
+class SubmissionNotFoundError(Exception):
+    pass
+
+
 class ProofNotAcceptedError(Exception):
     """Only quests take proof; an event RSVP has nothing to prove."""
+
+
+class AttemptPendingError(Exception):
+    """An earlier attempt is still waiting for a moderator (BE-40)."""
+
+
+class AlreadyApprovedError(Exception):
+    """The quest is already completed; there is nothing left to prove (BE-40)."""
+
+
+class SubmissionNotAllowedError(Exception):
+    """The participation is in a state that does not take a new attempt."""
 
 
 class EmptySubmissionError(Exception):
     """An attempt needs at least some text or one file."""
 
 
-class SubmissionConflictError(Exception):
-    """A new attempt is refused while one is already Pending or Approved.
+class MissingRequiredProofError(Exception):
+    """The quest asks for text and/or media that the attempt does not include.
+    `fields` names each missing part ("text", "media_ids")."""
 
-    Resubmission after Rejected needs a real rejected participation status from
-    a review decision. Without review tables every current attempt is Pending,
-    so a second submit is always a conflict.
-    """
+    def __init__(self, fields: list[str]):
+        super().__init__(fields)
+        self.fields = fields
+
+
+class MediaNotFoundError(Exception):
+    pass
+
+
+class MediaAccessDeniedError(Exception):
+    """Proof is readable by its owner and by moderators, nobody else (BE-42)."""
 
 
 class UnsupportedMediaTypeError(Exception):
@@ -98,7 +126,17 @@ class SubmissionRecord:
     media: list[MediaRecord]
     status: SubmissionStatus
     submitted_at: datetime
+    # Set once a moderator has decided this attempt.
+    feedback: str | None = None
+    reviewed_at: datetime | None = None
 
+
+# Where a new attempt may start from: a first attempt, or a retry after a
+# rejection (BE-41). The rejected attempt and its review stay as they are; the
+# retry is a new row with the next attempt number.
+SUBMITTABLE_STATUSES = frozenset(
+    {ParticipationStatus.JOINED, ParticipationStatus.REJECTED}
+)
 
 SELECT_MEDIA_COLUMNS = """
     SELECT media_id, owner_id, submission_id, content_type, media_kind,
@@ -108,9 +146,12 @@ SELECT_MEDIA_COLUMNS = """
 
 SELECT_SUBMISSION_COLUMNS = """
     SELECT s.submission_id, s.participation_id, s.attempt_number, s.text_proof,
-           s.created_at, p.item_id, p.user_id
+           s.created_at, p.item_id, p.user_id,
+           r.decision AS review_decision, r.feedback AS review_feedback,
+           r.created_at AS reviewed_at
     FROM submissions AS s
     JOIN participations AS p ON p.participation_id = s.participation_id
+    LEFT JOIN reviews AS r ON r.submission_id = s.submission_id
 """
 
 
@@ -180,10 +221,85 @@ class ProofService:
         )
         return self._to_media(row)
 
+    def read_media(
+        self, media_id: int, viewer_id: int, viewer_is_moderator: bool
+    ) -> tuple[MediaRecord, bytes]:
+        """The bytes of one upload, for its owner or for a moderator reviewing it."""
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                text(f"{SELECT_MEDIA_COLUMNS} WHERE media_id = :media_id"),
+                {"media_id": media_id},
+            ).one_or_none()
+        if row is None:
+            raise MediaNotFoundError
+        record = self._to_media(row)
+        if record.owner_id != viewer_id and not viewer_is_moderator:
+            logger.warning(
+                "Proof media read refused",
+                extra={"media_id": media_id, "viewer_id": viewer_id},
+            )
+            raise MediaAccessDeniedError
+        try:
+            data = self.object_store.get(record.object_key)
+        except ObjectNotFoundError as error:
+            logger.error(
+                "Proof media missing from storage", extra={"media_id": media_id}
+            )
+            raise MediaNotFoundError from error
+        return record, data
+
+    def delete_abandoned_uploads(
+        self, older_than: timedelta, now: datetime | None = None
+    ) -> int:
+        """BE-43: removes uploads that never made it into a submission (the app
+        crashed, the student gave up, the submission was refused) once they are
+        older than `older_than`. Returns how many were removed.
+
+        The rows go first, in one transaction, and the files after it commits:
+        if deleting a file fails it is only an orphaned file to retry by hand,
+        never a row that points at nothing. SKIP LOCKED leaves alone any upload
+        a submission is attaching at this very moment.
+        """
+        cutoff = to_utc_naive((now or datetime.now(timezone.utc)) - older_than)
+        with self.engine.begin() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT media_id, object_key
+                    FROM submission_media
+                    WHERE submission_id IS NULL AND created_at < :cutoff
+                    ORDER BY media_id
+                    FOR UPDATE SKIP LOCKED
+                    """
+                ),
+                {"cutoff": cutoff},
+            ).all()
+            if rows:
+                connection.execute(
+                    text(
+                        "DELETE FROM submission_media WHERE media_id IN :media_ids"
+                    ).bindparams(bindparam("media_ids", expanding=True)),
+                    {"media_ids": [row.media_id for row in rows]},
+                )
+
+        for row in rows:
+            try:
+                self.object_store.delete(row.object_key)
+            except Exception:
+                logger.exception(
+                    "Could not delete abandoned upload from storage",
+                    extra={"media_id": row.media_id},
+                )
+        logger.info("Cleaned up abandoned uploads", extra={"deleted": len(rows)})
+        return len(rows)
+
     def submit(
         self, user_id: int, participation_id: int, submission: SubmissionCreate
     ) -> SubmissionRecord:
-        """Adds a new attempt to the student's own participation in a quest."""
+        """Adds a new attempt to the student's own participation in a quest and
+        moves the participation to Pending. Both happen in one transaction
+        (BE-39), so a participation is never Pending without an attempt to
+        review, nor an attempt left behind a participation still at Joined."""
         logger.info(
             "Submitting proof",
             extra={"user_id": user_id, "participation_id": participation_id},
@@ -192,9 +308,8 @@ class ProofService:
             participation = self._lock_own_quest_participation(
                 connection, user_id, participation_id
             )
-            self._reject_if_submission_blocked(participation)
-            if submission.text is None and not submission.media_ids:
-                raise EmptySubmissionError
+            self._check_can_submit(participation)
+            self._check_required_proof(participation, submission)
             self._lock_attachable_media(connection, user_id, submission.media_ids)
             attempt_number = self._next_attempt_number(connection, participation_id)
             result = connection.execute(
@@ -224,20 +339,18 @@ class ProofService:
                     ).bindparams(bindparam("media_ids", expanding=True)),
                     {"submission_id": submission_id, "media_ids": submission.media_ids},
                 )
-            # Authoritative student state: pin the current attempt and mark Pending.
-            # Approved/Rejected/points require review tables that do not exist yet.
             connection.execute(
                 text(
                     """
                     UPDATE participations
                     SET current_submission_id = :submission_id,
-                        status = :status
+                        status = :pending
                     WHERE participation_id = :participation_id
                     """
                 ),
                 {
                     "submission_id": submission_id,
-                    "status": ParticipationStatus.PENDING.value,
+                    "pending": ParticipationStatus.PENDING.value,
                     "participation_id": participation.participation_id,
                 },
             )
@@ -286,8 +399,8 @@ class ProofService:
         row = connection.execute(
             text(
                 """
-                SELECT p.participation_id, p.user_id, p.item_id, p.status,
-                       p.current_submission_id, i.kind
+                SELECT p.participation_id, p.user_id, p.item_id, p.status, i.kind,
+                       i.requires_text_proof, i.requires_media_proof
                 FROM participations AS p
                 JOIN catalogue_items AS i ON i.item_id = p.item_id
                 WHERE p.participation_id = :participation_id
@@ -309,19 +422,32 @@ class ProofService:
         return row
 
     @staticmethod
-    def _reject_if_submission_blocked(participation) -> None:
-        """Block a new attempt while Pending or Approved; allow only after Rejected."""
-        status = participation.status
-        if status == ParticipationStatus.REJECTED.value:
-            return
-        if status in (
-            ParticipationStatus.PENDING.value,
-            ParticipationStatus.APPROVED.value,
-        ):
-            raise SubmissionConflictError
-        if participation.current_submission_id is not None:
-            # Joined-but-already-submitted (legacy rows before status was updated).
-            raise SubmissionConflictError
+    def _check_can_submit(participation) -> None:
+        """BE-40: one attempt in front of moderators at a time, and none once the
+        quest is approved. Read from the row locked above, so two submissions
+        sent together cannot both see Joined."""
+        current = ParticipationStatus(participation.status)
+        if current == ParticipationStatus.PENDING:
+            raise AttemptPendingError
+        if current == ParticipationStatus.APPROVED:
+            raise AlreadyApprovedError
+        if current not in SUBMITTABLE_STATUSES:
+            raise SubmissionNotAllowedError
+
+    @staticmethod
+    def _check_required_proof(participation, submission: SubmissionCreate) -> None:
+        """BE-38: refuse an attempt that lacks what the quest asks for, so
+        incomplete proof never reaches a moderator. With no explicit requirement,
+        at least some text or one file is still needed (BE-37)."""
+        missing = []
+        if participation.requires_text_proof and submission.text is None:
+            missing.append("text")
+        if participation.requires_media_proof and not submission.media_ids:
+            missing.append("media_ids")
+        if missing:
+            raise MissingRequiredProofError(missing)
+        if submission.text is None and not submission.media_ids:
+            raise EmptySubmissionError
 
     @staticmethod
     def _lock_attachable_media(connection, user_id: int, media_ids: list[int]) -> None:
@@ -359,44 +485,68 @@ class ProofService:
             {"participation_id": participation_id},
         ).scalar_one()
 
-    def _load_submission(self, connection, submission_id: int) -> SubmissionRecord:
-        row = connection.execute(
-            text(f"{SELECT_SUBMISSION_COLUMNS} WHERE s.submission_id = :submission_id"),
-            {"submission_id": submission_id},
-        ).one()
-        return self._to_record(connection, row)
+    @staticmethod
+    def _load_submission(connection, submission_id: int) -> SubmissionRecord:
+        return load_submission(connection, submission_id)
 
-    def _to_record(self, connection, row) -> SubmissionRecord:
-        media_rows = connection.execute(
-            text(
-                f"""{SELECT_MEDIA_COLUMNS}
-                WHERE submission_id = :submission_id
-                ORDER BY media_id
-                """
-            ),
-            {"submission_id": row.submission_id},
-        ).all()
-        return SubmissionRecord(
-            submission_id=row.submission_id,
-            participation_id=row.participation_id,
-            item_id=row.item_id,
-            user_id=row.user_id,
-            attempt_number=row.attempt_number,
-            text=row.text_proof,
-            media=[self._to_media(media_row) for media_row in media_rows],
-            status=SubmissionStatus.PENDING,
-            submitted_at=from_utc_naive(row.created_at),
-        )
+    @staticmethod
+    def _to_record(connection, row) -> SubmissionRecord:
+        return submission_record_from_row(connection, row)
 
     @staticmethod
     def _to_media(row) -> MediaRecord:
-        return MediaRecord(
-            media_id=row.media_id,
-            owner_id=row.owner_id,
-            submission_id=row.submission_id,
-            content_type=row.content_type,
-            kind=MediaKind(row.media_kind),
-            size_bytes=row.size_bytes,
-            object_key=row.object_key,
-            uploaded_at=from_utc_naive(row.created_at),
-        )
+        return media_record_from_row(row)
+
+
+def media_record_from_row(row) -> MediaRecord:
+    return MediaRecord(
+        media_id=row.media_id,
+        owner_id=row.owner_id,
+        submission_id=row.submission_id,
+        content_type=row.content_type,
+        kind=MediaKind(row.media_kind),
+        size_bytes=row.size_bytes,
+        object_key=row.object_key,
+        uploaded_at=from_utc_naive(row.created_at),
+    )
+
+
+def load_submission(connection, submission_id: int) -> SubmissionRecord:
+    """One attempt with its files, read on the caller's connection so it sees
+    the caller's own uncommitted writes. Shared with the review side."""
+    row = connection.execute(
+        text(f"{SELECT_SUBMISSION_COLUMNS} WHERE s.submission_id = :submission_id"),
+        {"submission_id": submission_id},
+    ).one_or_none()
+    if row is None:
+        raise SubmissionNotFoundError
+    return submission_record_from_row(connection, row)
+
+
+def submission_record_from_row(connection, row) -> SubmissionRecord:
+    media_rows = connection.execute(
+        text(
+            f"""{SELECT_MEDIA_COLUMNS}
+            WHERE submission_id = :submission_id
+            ORDER BY media_id
+            """
+        ),
+        {"submission_id": row.submission_id},
+    ).all()
+    return SubmissionRecord(
+        submission_id=row.submission_id,
+        participation_id=row.participation_id,
+        item_id=row.item_id,
+        user_id=row.user_id,
+        attempt_number=row.attempt_number,
+        text=row.text_proof,
+        media=[media_record_from_row(media_row) for media_row in media_rows],
+        status=(
+            SubmissionStatus(row.review_decision)
+            if row.review_decision is not None
+            else SubmissionStatus.PENDING
+        ),
+        submitted_at=from_utc_naive(row.created_at),
+        feedback=row.review_feedback,
+        reviewed_at=from_utc_naive(row.reviewed_at),
+    )

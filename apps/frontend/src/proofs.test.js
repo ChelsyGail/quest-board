@@ -12,16 +12,22 @@ import { resetDemoQuests, demoJoinItem } from "./demoQuests.js";
 import { resetDemoRewards, demoGetAchievements } from "./rewardsDemo.js";
 
 describe("proof helpers", () => {
-  it("keeps free-text instructions without inventing mandatory photo/video flags", () => {
-    const photoQuest = inferRequirements({ proofInstructions: "Upload a photo of the bag." });
-    expect(photoQuest.requiresPhoto).toBe(false);
-    expect(photoQuest.requiresVideo).toBe(false);
-    expect(photoQuest.structuredRequirementsSupported).toBe(false);
-    expect(photoQuest.instructions).toMatch(/photo/i);
+  it("uses structured catalogue flags when present and otherwise keeps free-text only", () => {
+    const freeText = inferRequirements({ proofInstructions: "Upload a photo of the bag." });
+    expect(freeText.requiresPhoto).toBe(false);
+    expect(freeText.requiresMedia).toBe(false);
+    expect(freeText.structuredRequirementsSupported).toBe(false);
+    expect(freeText.instructions).toMatch(/photo/i);
 
-    const videoQuest = inferRequirements({ proofInstructions: "Send a short video clip." });
-    expect(videoQuest.requiresVideo).toBe(false);
-    expect(videoQuest.instructions).toMatch(/video/i);
+    const structured = inferRequirements({
+      proofInstructions: "Show your bag.",
+      requiresTextProof: true,
+      requiresMediaProof: true,
+    });
+    expect(structured.requiresText).toBe(true);
+    expect(structured.requiresMedia).toBe(true);
+    expect(structured.requiresPhoto).toBe(true);
+    expect(structured.structuredRequirementsSupported).toBe(true);
   });
 
   it("validates basic text-or-media and combined file limits", () => {

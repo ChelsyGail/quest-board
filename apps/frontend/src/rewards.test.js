@@ -40,12 +40,12 @@ describe("rewards demo adapter", () => {
   it("claims only when the server-side demo ledger says eligible", async () => {
     const session = { userId: "42", token: "tok" };
     const client = getRewardsClient(session);
-    let rewards = await client.listRewards();
+    let rewards = (await client.listRewards()).items;
     const sticker = rewards.find((reward) => reward.id === "r2");
     expect(sticker.eligibility).toBe("insufficient_points");
 
     demoAwardPoints("42", 20, { badgeName: "Starter" });
-    rewards = await client.listRewards();
+    rewards = (await client.listRewards()).items;
     expect(rewards.find((reward) => reward.id === "r2").eligibility).toBe("eligible");
 
     const claimed = await client.claimReward("r2");

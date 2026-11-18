@@ -1,0 +1,22 @@
+QuestBoard final-sprint RC — live API E2E (2026-11-18)
+DB: questboard_review (migrations through 0020_unique_reward_claim.sql)
+Users: e2e2-stu-fc7bf5cb@aup.edu / e2e2-org-… / e2e2-mod-… (password not stored here)
+
+PASS CREATE_QUEST id=129 requires_text+media
+PASS PUBLISH 200
+PASS JOIN participation=35
+PASS UPLOAD raw body Content-Type:image/jpeg -> media=3
+PASS SUBMIT submission=4 status=pending
+PASS QUEUE includes submission 4
+PASS APPROVE 201 review=1 points_awarded=25 badge First Quest
+PASS ACHIEVEMENTS total_points=25 available_points=25 completed_quests=1
+PASS REWARD create id=2
+PASS CLAIM 201 points_spent=10 available_points=15
+PASS GET_MEDIA 200 633 bytes JPEG
+PASS LEAVE DELETE /items/{id}/join -> 204
+
+Browser evidence (Playwright, live FE flags):
+- 01-student-home.png — E2E Student, joined E2E quests on board
+- 02-student-rewards.png — 25 earned / 15 spendable, First Quest, claimed mug
+- 03-student-quests.png — catalogue
+- 04-moderator-queue.png — Proof review pending list for E2E Moderator

@@ -706,7 +706,7 @@ def test_proof_upload_submit_list_and_conflict(world):
         headers=world["student"],
     )
     assert conflict.status_code == 409, conflict.text
-    assert conflict.json()["errors"][0]["code"] == "submission_already_pending"
+    assert conflict.json()["errors"][0]["code"] == "attempt_pending"
 
     refused_leave = client.delete(f"/items/{item_id}/join", headers=world["student"])
     assert refused_leave.status_code == 409

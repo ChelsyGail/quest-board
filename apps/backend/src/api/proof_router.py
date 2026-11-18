@@ -6,29 +6,39 @@ from fastapi import FastAPI
 from fastapi import Header
 from fastapi import Path
 from fastapi import Request
+from fastapi import Response
 from fastapi import status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from models.proof import MediaAttributes
 from models.proof import MediaResourceData
 from models.proof import SubmissionAttributes
 from models.proof import SubmissionCreate
 from models.proof import SubmissionMedia
 from models.proof import SubmissionResourceData
+from models.responses.json_api import JsonApiError
+from models.responses.json_api import JsonApiErrorSource
 from models.responses.proof import MediaErrorResponse
 from models.responses.proof import MediaResponse
 from models.responses.proof import SubmissionErrorResponse
 from models.responses.proof import SubmissionListResponse
 from models.responses.proof import SubmissionResponse
+from models.users import UserRole
+from services.proof_service import AlreadyApprovedError
+from services.proof_service import AttemptPendingError
 from services.proof_service import EmptySubmissionError
 from services.proof_service import EmptyUploadError
+from services.proof_service import MediaAccessDeniedError
 from services.proof_service import MediaContentMismatchError
+from services.proof_service import MediaNotFoundError
 from services.proof_service import MediaNotUsableError
 from services.proof_service import MediaRecord
 from services.proof_service import MediaTooLargeError
+from services.proof_service import MissingRequiredProofError
 from services.proof_service import NotYourParticipationError
 from services.proof_service import ParticipationNotFoundError
 from services.proof_service import ProofNotAcceptedError
-from services.proof_service import SubmissionConflictError
+from services.proof_service import SubmissionNotAllowedError
 from services.proof_service import SubmissionRecord
 from services.proof_service import UnsupportedMediaTypeError
 from utilities.auth import build_current_user_dependency
@@ -105,6 +115,42 @@ def setup_proof_router(app: FastAPI, services: Services):
             return _media_content_mismatch()
         return MediaResponse(data=to_media_resource(record))
 
+    @router.get(
+        "/media/{media_id}",
+        response_class=Response,
+        responses={
+            200: {"content": {t: {} for t in ALLOWED_MEDIA_TYPES}},
+            401: {"model": MediaErrorResponse},
+            403: {"model": MediaErrorResponse},
+            404: {"model": MediaErrorResponse},
+        },
+    )
+    def read_media(
+        media_id: int = Path(gt=0),
+        current_user: CurrentUser = Depends(get_current_user),
+    ):
+        """Streams proof media through the API. Only the student who uploaded it
+        and moderators may read it; the storage itself is never public."""
+        try:
+            record, data = services.proof_service.read_media(
+                media_id,
+                current_user.user_id,
+                current_user.has_role(UserRole.MODERATOR),
+            )
+        except MediaNotFoundError:
+            return _media_not_found()
+        except MediaAccessDeniedError:
+            return _media_forbidden()
+        return Response(
+            content=data,
+            media_type=record.content_type,
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": "inline",
+            },
+        )
+
     @router.post(
         "/participations/{participation_id}/submissions",
         response_model=SubmissionResponse,
@@ -127,10 +173,16 @@ def setup_proof_router(app: FastAPI, services: Services):
             return _not_your_participation()
         except ProofNotAcceptedError:
             return _proof_not_accepted()
+        except AttemptPendingError:
+            return _attempt_pending()
+        except AlreadyApprovedError:
+            return _already_approved()
+        except SubmissionNotAllowedError:
+            return _submission_not_allowed()
+        except MissingRequiredProofError as error:
+            return _missing_required_proof(error.fields)
         except EmptySubmissionError:
             return _empty_submission()
-        except SubmissionConflictError:
-            return _submission_conflict()
         except MediaNotUsableError as error:
             return _media_not_usable(error.index)
         return SubmissionResponse(data=to_submission_resource(record))
@@ -195,7 +247,12 @@ def to_submission_media(record: MediaRecord) -> SubmissionMedia:
         content_type=record.content_type,
         kind=record.kind,
         size_bytes=record.size_bytes,
+        url=media_url(record.media_id),
     )
+
+
+def media_url(media_id: int) -> str:
+    return f"/media/{media_id}"
 
 
 def to_submission_resource(record: SubmissionRecord) -> SubmissionResourceData:
@@ -210,6 +267,8 @@ def to_submission_resource(record: SubmissionRecord) -> SubmissionResourceData:
             media=[to_submission_media(media) for media in record.media],
             status=record.status,
             submitted_at=record.submitted_at,
+            feedback=record.feedback,
+            reviewed_at=record.reviewed_at,
         ),
     )
 
@@ -255,18 +314,6 @@ def _empty_submission():
         "Proof missing",
         "Add a description, a photo or a video before submitting.",
         "/text",
-    )
-
-
-def _submission_conflict():
-    return json_api_error_response(
-        SubmissionErrorResponse,
-        status.HTTP_409_CONFLICT,
-        "submission_already_pending",
-        "Proof already submitted",
-        "This quest already has a proof waiting for review or already approved. "
-        "You can submit again only after a rejection.",
-        "/participation_id",
     )
 
 
@@ -324,4 +371,86 @@ def _media_too_large(limit_bytes: int):
         "File too large",
         f"Files of this type can be at most {megabytes} MB.",
         "/size_bytes",
+    )
+
+
+REQUIRED_PROOF_MESSAGES = {
+    "text": "This quest needs a written description of what you did.",
+    "media_ids": "This quest needs at least one photo or video.",
+}
+
+
+def _missing_required_proof(fields: list[str]):
+    """One error per missing part, each pointing at the field to fill in."""
+    document = SubmissionErrorResponse(
+        errors=[
+            JsonApiError(
+                status="422",
+                code="required_proof_missing",
+                title="Required proof missing",
+                detail=REQUIRED_PROOF_MESSAGES[field],
+                source=JsonApiErrorSource(pointer=f"/{field}"),
+            )
+            for field in fields
+        ]
+    )
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=document.model_dump(mode="json", exclude_none=True),
+    )
+
+
+def _attempt_pending():
+    return json_api_error_response(
+        SubmissionErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "attempt_pending",
+        "Attempt awaiting review",
+        "Your last attempt is still waiting for a moderator. "
+        "You can try again if it is rejected.",
+        "/participation_id",
+    )
+
+
+def _already_approved():
+    return json_api_error_response(
+        SubmissionErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "already_approved",
+        "Quest already completed",
+        "This quest has already been approved for you.",
+        "/participation_id",
+    )
+
+
+def _submission_not_allowed():
+    return json_api_error_response(
+        SubmissionErrorResponse,
+        status.HTTP_409_CONFLICT,
+        "submission_not_allowed",
+        "Cannot submit now",
+        "This participation does not accept a new attempt.",
+        "/participation_id",
+    )
+
+
+def _media_not_found():
+    return json_api_error_response(
+        MediaErrorResponse,
+        status.HTTP_404_NOT_FOUND,
+        "media_not_found",
+        "Media not found",
+        "There is no proof file with that id.",
+        "/media_id",
+    )
+
+
+def _media_forbidden():
+    return json_api_error_response(
+        MediaErrorResponse,
+        status.HTTP_403_FORBIDDEN,
+        "media_forbidden",
+        "Not allowed to view this file",
+        "Proof files are visible only to the student who uploaded them and to moderators.",
+        "/media_id",
     )

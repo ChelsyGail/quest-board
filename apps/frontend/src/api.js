@@ -356,6 +356,15 @@ function readItem(resource) {
     timeZone: attributes.time_zone,
     category: attributes.category || "",
     proofInstructions: attributes.proof_instructions || "",
+    // Structured proof flags from migration 0010 (null on events).
+    requiresTextProof:
+      attributes.requires_text_proof == null
+        ? null
+        : Boolean(attributes.requires_text_proof),
+    requiresMediaProof:
+      attributes.requires_media_proof == null
+        ? null
+        : Boolean(attributes.requires_media_proof),
     pointValue: attributes.point_value ?? null,
     status: attributes.status,
     publishedAt: attributes.published_at || "",

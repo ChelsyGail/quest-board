@@ -27,12 +27,17 @@ def read_applied_filenames(connection: Connection) -> set[str]:
     return {row[0] for row in result}
 
 
-def split_statements(sql: str) -> list[str]:
-    # Full-line comments may contain ";", which would otherwise split a statement.
-    code = "\n".join(
+def strip_comment_lines(sql: str) -> str:
+    # Drop whole-line `--` comments first so a `;` inside a comment
+    # doesn't get treated as the end of a statement.
+    return "\n".join(
         line for line in sql.splitlines() if not line.lstrip().startswith("--")
     )
-    return [statement.strip() for statement in code.split(";") if statement.strip()]
+
+
+def split_statements(sql: str) -> list[str]:
+    statements = strip_comment_lines(sql).split(";")
+    return [statement.strip() for statement in statements if statement.strip()]
 
 
 def apply_schema_file(connection: Connection, schema_file: Path) -> None:

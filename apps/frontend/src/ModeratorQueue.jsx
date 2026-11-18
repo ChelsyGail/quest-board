@@ -4,6 +4,7 @@ import {
   PROOF_FEEDBACK_MAX,
   proofsMode,
   proofsUnavailableMessage,
+  revokeSubmissionMediaUrls,
   submissionStatusLabel,
 } from "./proofs.js";
 
@@ -47,9 +48,9 @@ function ModeratorQueue({ session, onSessionExpired }) {
       setError("");
     }
     try {
-      const list = await client.listPending();
+      const result = await client.listPending();
       if (gen !== loadGen.current || userId !== session.userId) return;
-      setRows(list);
+      setRows(Array.isArray(result) ? result : result.items || []);
       setStatus("ready");
       setError("");
     } catch (err) {
@@ -83,7 +84,10 @@ function ModeratorQueue({ session, onSessionExpired }) {
 
   useEffect(() => {
     if (!client || !selectedId) {
-      setDetail(null);
+      setDetail((current) => {
+        revokeSubmissionMediaUrls(current);
+        return null;
+      });
       return undefined;
     }
     let cancelled = false;
@@ -92,7 +96,10 @@ function ModeratorQueue({ session, onSessionExpired }) {
       try {
         const submission = await client.getModerationSubmission(selectedId);
         if (cancelled || selectedRef.current !== requestId) return;
-        setDetail(submission);
+        setDetail((current) => {
+          revokeSubmissionMediaUrls(current);
+          return submission;
+        });
         setFeedback("");
         setActionError("");
       } catch (err) {
@@ -133,17 +140,23 @@ function ModeratorQueue({ session, onSessionExpired }) {
     setActionError("");
     setNotice("");
     try {
-      const updated =
+      const review =
         kind === "approve"
           ? await client.approve(detail.id)
           : await client.reject(detail.id, feedback.trim());
       if (userId !== session.userId || selectedRef.current !== detailId) return;
+      const decision = review.decision || review.status;
+      const pointsNote =
+        review.pointsAwarded != null ? ` Points awarded: ${review.pointsAwarded}.` : "";
       setNotice(
-        `Marked ${submissionStatusLabel(updated.status).toLowerCase()}. The student will see this on their quest.`
+        `Marked ${submissionStatusLabel(decision).toLowerCase()}.${pointsNote} The student will see this on their quest.`
       );
       selectedRef.current = null;
       setSelectedId(null);
-      setDetail(null);
+      setDetail((current) => {
+        revokeSubmissionMediaUrls(current);
+        return null;
+      });
       await loadQueue({ soft: true });
     } catch (err) {
       if (userId !== session.userId) return;
@@ -151,12 +164,20 @@ function ModeratorQueue({ session, onSessionExpired }) {
         onExpiredRef.current?.();
         return;
       }
-      if (err.code === "already_reviewed") {
-        setActionError("Someone else already reviewed this submission.");
+      if (err.code === "self_review") {
+        setActionError("You can't review your own submission.");
+      } else if (
+        err.code === "submission_already_reviewed" ||
+        err.code === "already_reviewed"
+      ) {
+        setActionError("This submission was already reviewed.");
         await loadQueue({ soft: true });
         selectedRef.current = null;
         setSelectedId(null);
-        setDetail(null);
+        setDetail((current) => {
+          revokeSubmissionMediaUrls(current);
+          return null;
+        });
       } else {
         setActionError(err.message || "Couldn't save that decision.");
       }
@@ -257,7 +278,14 @@ function ModeratorQueue({ session, onSessionExpired }) {
                 <ul className="proof-preview-list">
                   {detail.photos.map((photo) => (
                     <li key={photo.id}>
-                      <img src={photo.url} alt={photo.name || "Submitted photo"} />
+                      {photo.url ? (
+                        <img src={photo.url} alt={photo.name || "Submitted photo"} />
+                      ) : (
+                        <div className="proof-preview-fallback">
+                          <span className="proof-filename">{photo.name}</span>
+                          <span className="muted small">Preview unavailable</span>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -266,7 +294,13 @@ function ModeratorQueue({ session, onSessionExpired }) {
             {detail.video && (
               <div>
                 <h3 className="small-title">Video</h3>
-                <video src={detail.video.url} controls width="360" />
+                {detail.video.url ? (
+                  <video src={detail.video.url} controls width="360" />
+                ) : (
+                  <p className="muted small">
+                    {detail.video.name} — preview unavailable
+                  </p>
+                )}
               </div>
             )}
             <label className="field">

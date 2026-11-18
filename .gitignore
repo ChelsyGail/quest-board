@@ -219,3 +219,6 @@ __marimo__/
 
 # Local git worktrees (e.g. QB-50 backend for integration testing)
 .worktrees/
+
+# Local agent/toolchain binaries
+.tools/

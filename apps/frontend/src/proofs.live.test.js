@@ -178,4 +178,16 @@ describe("live proof adapter", () => {
       })
     ).toEqual({});
   });
+
+  it("maps structured requires_media_proof into draft validation", () => {
+    const reqs = basicRequirements({
+      proofInstructions: "Media required.",
+      requiresTextProof: false,
+      requiresMediaProof: true,
+    });
+    expect(reqs.requiresMedia).toBe(true);
+    expect(
+      validateProofDraft(reqs, { text: "", photos: [], video: null }).photos
+    ).toMatch(/photo|video/i);
+  });
 });
