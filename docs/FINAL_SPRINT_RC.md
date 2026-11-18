@@ -2,7 +2,7 @@
 
 **Head:** `taha-final-sprint-integration` (this PR)  
 **Base:** `ChelsyGail/quest-board` `main`  
-**Final tip SHA:** `0b68a1a0a88ba1d92efa4ac84b3e68c5f4f0c2d8`  
+**Final tip SHA:** verify with `git rev-parse origin/taha-final-sprint-integration` after fetch (pushed tip at closeout: `15a842ca76173c52a0e6ff0df8d74b8a42fc0700`; docs-only follow-ups may advance HEAD by one commit).  
 **Dependency:** Incorporates Chelsy `last-sprint` / PR **#24** backend (proof → moderation → recognition → rewards, migrations `0010`–`0020`) onto our FE tip `faf4db1` (`taha-proof-backend-integration`). Do **not** also merge PR #24 into `main` after this lands, or backend will double-apply. Prefer closing #24 as superseded once this RC is accepted.
 
 ## Why not base on `last-sprint` alone
