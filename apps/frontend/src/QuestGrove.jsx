@@ -227,7 +227,7 @@ function QuestGrove({ author, onSessionExpired }) {
   return (
     <div className="page-stack grove-page">
       {header}
-      <PrototypeNotice />
+      {client?.isPrototype && <PrototypeNotice />}
       <section className="discovery-filters grove-controls" aria-label="Search and topics">
         <DiscussionFilters
           filters={board.filters}

@@ -1,7 +1,7 @@
-// Discussions are a frontend prototype: there is no discussion API yet (see
-// docs/discussion-api-proposal.md). The sample adapter only runs on the DEV server with
-// VITE_DISCUSSIONS_DEMO=true. Otherwise there is no discussion client at all and the pages
-// say so; they never fall back to sample data.
+// Quest discussions and Quest Grove: demo tab-local prototype (DEV + VITE_DISCUSSIONS_DEMO)
+// or live API (VITE_DISCUSSIONS_API). Live mode never falls back to demo on failure.
+// See docs/discussion-api-proposal.md for scopes and route shapes.
+import { ApiError } from "./api.js";
 import {
   demoCreateReply,
   demoCreateThread,
@@ -50,27 +50,171 @@ export function discussionsPrototypeEnabled() {
   return import.meta.env.DEV === true && import.meta.env.VITE_DISCUSSIONS_DEMO === "true";
 }
 
+export function discussionsApiEnabled() {
+  return import.meta.env.VITE_DISCUSSIONS_API === "true";
+}
+
+export function discussionsMode() {
+  if (discussionsPrototypeEnabled()) return "demo";
+  if (discussionsApiEnabled()) return "live";
+  return "unavailable";
+}
+
 const discussionClientCache = new Map();
 
 export function clearDiscussionClientCache() {
   discussionClientCache.clear();
 }
 
-// The sample adapter in prototype mode, otherwise null: nothing to read or post to yet.
-// `author` is { id, name } of the signed-in user, used for posts made in this tab.
+function apiBase() {
+  return (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+}
+
+/** Maps logical scopes (`grove`, `quest:{id}:active`, `quest:{id}:submitted`) to REST paths. */
+export function scopeToThreadsPath(scope) {
+  if (scope === "grove") return "/discussions/grove/threads";
+  const quest = /^quest:([^:]+):(active|submitted)$/.exec(scope);
+  if (quest) return `/discussions/quests/${quest[1]}/spaces/${quest[2]}/threads`;
+  const legacy = /^quest:([^:]+)$/.exec(scope);
+  if (legacy) return `/discussions/quests/${legacy[1]}/spaces/submitted/threads`;
+  throw new ApiError(`Unknown discussion scope: ${scope}`, 422, {}, "validation_error");
+}
+
+async function liveDocument(path, { method = "GET", body, token } = {}) {
+  const base = apiBase();
+  if (!base) {
+    throw new ApiError("The API URL is not configured.", 0, {}, "api_not_configured");
+  }
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (body) headers["Content-Type"] = "application/json";
+  let response;
+  try {
+    response = await fetch(base + path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new ApiError(
+      `Couldn't get a response from the server at ${base}. Check that the backend is running.`,
+      0
+    );
+  }
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+  if (!response.ok) {
+    const errors = data?.errors || [];
+    throw new ApiError(
+      errors.map((error) => error.detail || error.title).filter(Boolean).join(" ") ||
+        `Unexpected error (${response.status}).`,
+      response.status,
+      {},
+      errors[0]?.code || ""
+    );
+  }
+  if (!data || !("data" in data)) {
+    throw new ApiError("The server returned an unexpected response.", response.status);
+  }
+  return { data: data.data, meta: data.meta || null };
+}
+
+function mapThread(resource) {
+  const attributes = resource.attributes || resource;
+  return {
+    id: String(resource.id),
+    scope: attributes.scope,
+    title: attributes.title,
+    category: attributes.category,
+    body: attributes.body,
+    author: attributes.author,
+    createdAt: attributes.created_at,
+    replyCount: attributes.reply_count ?? 0,
+  };
+}
+
+function mapReply(resource) {
+  const attributes = resource.attributes || resource;
+  return {
+    id: String(resource.id),
+    threadId: String(attributes.thread_id),
+    body: attributes.body,
+    author: attributes.author,
+    createdAt: attributes.created_at,
+  };
+}
+
+function liveDiscussionClient(author) {
+  const token = author.token;
+  return {
+    isPrototype: false,
+    async listThreads(scope) {
+      const path = scopeToThreadsPath(scope);
+      const { data } = await liveDocument(path, { token });
+      return (Array.isArray(data) ? data : []).map(mapThread);
+    },
+    async getThread(threadId) {
+      const { data, meta } = await liveDocument(
+        `/discussions/threads/${encodeURIComponent(threadId)}`,
+        { token }
+      );
+      const replies = (meta?.replies || []).map(mapReply);
+      return { thread: mapThread(data), replies };
+    },
+    async createThread(scope, fields) {
+      const path = scopeToThreadsPath(scope);
+      const { data } = await liveDocument(path, {
+        method: "POST",
+        token,
+        body: {
+          title: fields.title,
+          category: fields.category,
+          body: fields.body,
+        },
+      });
+      return mapThread(data);
+    },
+    async createReply(threadId, fields) {
+      const { data } = await liveDocument(
+        `/discussions/threads/${encodeURIComponent(threadId)}/replies`,
+        {
+          method: "POST",
+          token,
+          body: { body: fields.body },
+        }
+      );
+      return mapReply(data);
+    },
+  };
+}
+
+// `author` is { id, name, token? }. Demo uses id/name only; live requires token.
 export function getDiscussionClient(author) {
-  if (!discussionsPrototypeEnabled()) return null;
-  if (!author?.id) return null;
-  const key = String(author.id);
+  if (discussionsPrototypeEnabled()) {
+    if (!author?.id) return null;
+    const key = `demo|${author.id}`;
+    const cached = discussionClientCache.get(key);
+    if (cached) return cached;
+    const client = {
+      isPrototype: true,
+      listThreads: (scope) => demoListThreads(scope),
+      getThread: (threadId) => demoGetThread(threadId),
+      createThread: (scope, fields) => demoCreateThread(scope, fields, author),
+      createReply: (threadId, fields) => demoCreateReply(threadId, fields, author),
+    };
+    discussionClientCache.set(key, client);
+    return client;
+  }
+  if (!discussionsApiEnabled()) return null;
+  if (!author?.id || !author?.token) return null;
+  const key = `live|${author.id}|${author.token}`;
   const cached = discussionClientCache.get(key);
   if (cached) return cached;
-  const client = {
-    isPrototype: true,
-    listThreads: (scope) => demoListThreads(scope),
-    getThread: (threadId) => demoGetThread(threadId),
-    createThread: (scope, fields) => demoCreateThread(scope, fields, author),
-    createReply: (threadId, fields) => demoCreateReply(threadId, fields, author),
-  };
+  const client = liveDiscussionClient(author);
   discussionClientCache.set(key, client);
   if (discussionClientCache.size > 24) {
     const oldest = discussionClientCache.keys().next().value;

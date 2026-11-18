@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from services.auth_service import AuthService
 from services.catalogue_service import CatalogueService
+from services.discussion_service import DiscussionService
 from services.health_service import HealthService
 from services.moderation_audit_service import ModerationAuditService
 from services.participation_service import ParticipationService
@@ -30,6 +31,7 @@ class Services:
     recognition_service: RecognitionService
     moderation_audit_service: ModerationAuditService
     reward_service: RewardService
+    discussion_service: DiscussionService
 
 
 def setup_services() -> Services:
@@ -46,6 +48,7 @@ def setup_services() -> Services:
     recognition_service = RecognitionService(load_database_settings())
     moderation_audit_service = ModerationAuditService(load_database_settings())
     reward_service = RewardService(load_database_settings())
+    discussion_service = DiscussionService(load_database_settings())
 
     return Services(
         health_service=health_service,
@@ -59,4 +62,5 @@ def setup_services() -> Services:
         recognition_service=recognition_service,
         moderation_audit_service=moderation_audit_service,
         reward_service=reward_service,
+        discussion_service=discussion_service,
     )

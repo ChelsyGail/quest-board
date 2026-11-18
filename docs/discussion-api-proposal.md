@@ -1,7 +1,8 @@
 # Discussion API — proposal
 
-**Status: proposal, not implemented (re-verified 2026-11-12; scopes updated same day).**
-The backend still has no discussion tables or routes on `main` or open teammate branches.
+**Status: partially implemented (2026-11-18).** Persistent threads and replies exist in
+`0021_create_discussions.sql`; the backend exposes scoped routes below. Reports, rate limits,
+moderator hide/delete, and WebSockets are still out of scope for this slice.
 The quest discussion section and Quest Grove remain a frontend prototype: with
 `VITE_DISCUSSIONS_DEMO=true` on the DEV server they use sample data kept in one browser tab
 (`apps/frontend/src/discussionsDemo.js`). Without it, and in every production build, they
@@ -43,9 +44,19 @@ Topics (`category`):
 All responses are JSON:API documents like the rest of the API. All routes require a bearer
 token.
 
-### `GET /discussions/{scope}/threads`
+### Thread lists (scoped)
 
-Query parameters:
+The frontend maps logical scopes to these paths (bearer token required):
+
+| Scope | Method and path |
+| --- | --- |
+| `grove` | `GET` / `POST` `/discussions/grove/threads` |
+| `quest:{item_id}:active` | `GET` / `POST` `/discussions/quests/{item_id}/spaces/active/threads` |
+| `quest:{item_id}:submitted` | `GET` / `POST` `/discussions/quests/{item_id}/spaces/submitted/threads` |
+
+Legacy `quest:{item_id}` rows are listed only under **submitted** (not `:active`).
+
+Query parameters (list):
 
 - `q`: case-insensitive search of the title and message.
 - `category`
@@ -59,9 +70,7 @@ Returns threads newest first, each with:
 
 It also returns `meta.page` with `number`, `size`, `total_items` and `total_pages`.
 
-### `POST /discussions/{scope}/threads`
-
-The body is `{ title, category, body }`. Returns `201` with the new thread.
+Create thread body: `{ title, category, body }`. Returns `201` with the new thread.
 
 ### `GET /discussions/threads/{thread_id}`
 
@@ -124,7 +133,6 @@ The body is `{ reason }`. Returns `202`. A user can report a given post only onc
 
 ## Frontend switch-over
 
-1. Add the endpoints to `apps/frontend/src/api.js`.
-2. Have `getDiscussionClient` in `discussions.js` return a live client when the backend
-   supports them. Keep the sample adapter for the dev-only flag.
+1. Live client lives in `apps/frontend/src/discussions.js` when `VITE_DISCUSSIONS_API=true`.
+2. Keep `VITE_DISCUSSIONS_DEMO=true` only on the dev server for the tab-local sample adapter.
 3. Move search, category filtering and pagination to the query parameters above.

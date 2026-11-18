@@ -305,7 +305,11 @@ function App() {
     const isOrganizer = roles.includes("organizer");
     const isStudent = roles.includes("student");
     const isModerator = roles.includes("moderator");
-    const author = { id: session.userId, name: profile?.name || "You" };
+    const author = {
+      id: session.userId,
+      name: profile?.name || "You",
+      token: session.token,
+    };
     const sessionWithName = { ...session, userName: author.name };
 
     const navPages = [];

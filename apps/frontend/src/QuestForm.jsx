@@ -27,6 +27,8 @@ const EMPTY_FORM = {
   category: "",
   proof_instructions: "",
   point_value: "",
+  requires_text_proof: false,
+  requires_media_proof: false,
 };
 const FIELD_NAMES = Object.keys(EMPTY_FORM);
 
@@ -93,6 +95,8 @@ function toPayload(form) {
     category: form.category.trim(),
     proof_instructions: form.proof_instructions.trim(),
     point_value: Number(form.point_value.trim()),
+    requires_text_proof: Boolean(form.requires_text_proof),
+    requires_media_proof: Boolean(form.requires_media_proof),
   };
 }
 
@@ -253,6 +257,32 @@ function QuestForm({ session, onCreated, onResultUnknown, onSessionExpired }) {
         hint: "What students must submit to show they completed the quest.",
       })}
 
+      <fieldset className="field proof-requirements">
+        <legend>Proof requirements</legend>
+        <p className="hint" id="quest-proof-requirements-hint">
+          Optional. When both are off, any non-empty text or media proof is enough. When a
+          box is checked, that kind of proof is required on submit.
+        </p>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={form.requires_text_proof}
+            onChange={(event) => update("requires_text_proof", event.target.checked)}
+            aria-describedby="quest-proof-requirements-hint"
+          />
+          Require written proof
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={form.requires_media_proof}
+            onChange={(event) => update("requires_media_proof", event.target.checked)}
+            aria-describedby="quest-proof-requirements-hint"
+          />
+          Require photo or video proof
+        </label>
+      </fieldset>
+
       <div className="field field-narrow">
         <label htmlFor="quest-point_value">Points</label>
         <input
@@ -278,7 +308,7 @@ function QuestForm({ session, onCreated, onResultUnknown, onSessionExpired }) {
           {isSubmitting ? "Saving draft…" : "Save as draft"}
         </button>
       </div>
-      <p className="form-error form-error-left" role="alert">
+      <p className="form-error form-error-left" role={formError ? "alert" : undefined}>
         {formError}
       </p>
       <p className="message message-left" aria-live="polite">

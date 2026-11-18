@@ -2,6 +2,7 @@ import logging
 
 from api.auth_router import setup_auth_router
 from api.catalogue_router import setup_catalogue_router
+from api.discussion_router import setup_discussion_router
 from api.health_router import setup_health_router
 from api.participation_router import setup_participation_router
 from api.proof_router import setup_proof_router
@@ -114,5 +115,6 @@ def setup_app(services: Services) -> FastAPI:
     setup_review_router(app, services)
     setup_recognition_router(app, services)
     setup_reward_router(app, services)
+    setup_discussion_router(app, services)
 
     return app

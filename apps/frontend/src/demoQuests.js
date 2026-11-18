@@ -291,6 +291,8 @@ export function demoCreateQuest(fields) {
     category: fields.category,
     proofInstructions: fields.proof_instructions,
     pointValue: fields.point_value,
+    requiresTextProof: Boolean(fields.requires_text_proof),
+    requiresMediaProof: Boolean(fields.requires_media_proof),
     status: "draft",
   });
   store.items.push(item);

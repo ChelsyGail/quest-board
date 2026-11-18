@@ -144,7 +144,7 @@ function MemberDiscussion({
 
   return (
     <>
-      {showPrototypeNotice && <PrototypeNotice />}
+      {showPrototypeNotice && client?.isPrototype && <PrototypeNotice />}
       {content}
     </>
   );
