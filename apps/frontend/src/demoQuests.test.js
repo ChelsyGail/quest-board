@@ -72,8 +72,8 @@ describe("Quest demo store", () => {
 
     await demoJoinItem(created.id, "user-7");
     const participations = await demoListMyParticipations("user-7");
-    expect(participations.map((entry) => entry.item.id)).toContain(created.id);
-    expect(participations[0].participation.status).toBe("joined");
+    const joined = participations.find((entry) => entry.item.id === created.id);
+    expect(joined.participation.status).toBe("joined");
 
     await expect(demoJoinItem(created.id, "user-7")).rejects.toMatchObject({
       status: 409,
@@ -86,7 +86,19 @@ describe("Quest demo store", () => {
     const before = (await demoListPublishedItems({})).page.totalItems;
     await demoJoinItem("demo-1", "user-7");
     await resetDemoQuests();
-    expect(await demoListMyParticipations("user-7")).toEqual([]);
+    const ids = (await demoListMyParticipations("user-7")).map((entry) => entry.item.id);
+    expect(ids).not.toContain("demo-1");
     expect((await demoListPublishedItems({})).page.totalItems).toBe(before);
+  });
+
+  it("gives each demo user sample participations of every status, and a saved-only item", async () => {
+    const entries = await demoListMyParticipations("user-8");
+    const statuses = entries.filter((entry) => entry.participation).map((entry) => entry.participation.status);
+    expect(new Set(statuses)).toEqual(new Set(["joined", "approved", "pending", "rejected"]));
+    const savedOnly = entries.filter((entry) => !entry.participation);
+    expect(savedOnly).toEqual([expect.objectContaining({ saved: true })]);
+    // Ended items stay off the board.
+    const board = await demoListPublishedItems({ pageSize: 50 });
+    expect(board.items.map((item) => item.title)).not.toContain("Library scavenger hunt");
   });
 });

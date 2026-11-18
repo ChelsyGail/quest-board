@@ -637,3 +637,105 @@ def test_concurrent_leave_item_membership_changes(world):
         )
         == 0
     )
+
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+def test_proof_upload_submit_list_and_conflict(world):
+    client = world["client"]
+    services = world["services"]
+    item_id = create_published(
+        world,
+        "Proof submit",
+        "2028-08-01T10:00:00+02:00",
+        "2028-08-01T12:00:00+02:00",
+    )
+    joined = client.post(f"/items/{item_id}/join", headers=world["student"])
+    assert joined.status_code == 201, joined.text
+    participation_id = joined.json()["data"]["id"]
+
+    upload = client.post(
+        "/uploads",
+        content=PNG_BYTES,
+        headers={**world["student"], "Content-Type": "image/png"},
+    )
+    assert upload.status_code == 201, upload.text
+    media_id = int(upload.json()["data"]["id"])
+
+    submitted = client.post(
+        f"/participations/{participation_id}/submissions",
+        json={"text": "Bag filled.", "media_ids": [media_id]},
+        headers=world["student"],
+    )
+    assert submitted.status_code == 201, submitted.text
+    body = submitted.json()["data"]
+    assert body["attributes"]["status"] == "pending"
+    assert body["attributes"]["attempt_number"] == 1
+    assert len(body["attributes"]["media"]) == 1
+
+    student_id = _user_id_from_auth(services, world["student"])
+    assert (
+        _count(
+            services,
+            "SELECT COUNT(*) FROM participations WHERE participation_id = :pid "
+            "AND status = 'pending' AND current_submission_id IS NOT NULL",
+            pid=int(participation_id),
+        )
+        == 1
+    )
+    assert student_id > 0
+
+    history = client.get(
+        f"/participations/{participation_id}/submissions",
+        headers=world["student"],
+    )
+    assert history.status_code == 200, history.text
+    assert history.json()["meta"]["count"] == 1
+
+    other = client.get(
+        f"/participations/{participation_id}/submissions",
+        headers=world["student_b"],
+    )
+    assert other.status_code == 403
+    assert other.json()["errors"][0]["code"] == "participation_not_owned"
+
+    conflict = client.post(
+        f"/participations/{participation_id}/submissions",
+        json={"text": "Second try"},
+        headers=world["student"],
+    )
+    assert conflict.status_code == 409, conflict.text
+    assert conflict.json()["errors"][0]["code"] == "attempt_pending"
+
+    refused_leave = client.delete(f"/items/{item_id}/join", headers=world["student"])
+    assert refused_leave.status_code == 409
+    assert refused_leave.json()["errors"][0]["code"] == "proof_already_submitted"
+
+
+def test_proof_rejects_unsupported_type_and_text_only_ok(world):
+    client = world["client"]
+    item_id = create_published(
+        world,
+        "Proof text only",
+        "2028-08-02T10:00:00+02:00",
+        "2028-08-02T12:00:00+02:00",
+    )
+    joined = client.post(f"/items/{item_id}/join", headers=world["student"])
+    participation_id = joined.json()["data"]["id"]
+
+    bad = client.post(
+        "/uploads",
+        content=b"GIF89a" + b"\x00" * 20,
+        headers={**world["student"], "Content-Type": "image/gif"},
+    )
+    assert bad.status_code == 422
+    assert bad.json()["errors"][0]["code"] == "unsupported_media_type"
+
+    text_only = client.post(
+        f"/participations/{participation_id}/submissions",
+        json={"text": "Completed without a photo."},
+        headers=world["student"],
+    )
+    assert text_only.status_code == 201, text_only.text
+    assert text_only.json()["data"]["attributes"]["media"] == []

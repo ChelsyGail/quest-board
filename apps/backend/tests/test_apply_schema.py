@@ -11,4 +11,8 @@ def test_semicolons_in_comments_do_not_split_statements():
 def test_every_schema_file_splits_into_sql_statements():
     for schema_file in sorted(SCHEMA_DIRECTORY.glob("*.sql")):
         for statement in split_statements(schema_file.read_text(encoding="utf-8")):
-            assert statement.split()[0].upper() in {"CREATE", "ALTER"}, schema_file.name
+            assert statement.split()[0].upper() in {
+                "CREATE",
+                "ALTER",
+                "INSERT",
+            }, schema_file.name

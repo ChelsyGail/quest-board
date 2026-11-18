@@ -219,3 +219,15 @@ __marimo__/
 
 # Local git worktrees (e.g. QB-50 backend for integration testing)
 .worktrees/
+
+# Local agent/toolchain binaries
+.tools/
+
+# macOS junk
+.DS_Store
+**/.DS_Store
+
+# Local evidence logs (screenshots under docs/evidence/ are opt-in)
+docs/evidence/*.log
+docs/evidence/browser-*-log.txt
+docs/evidence/browser-e2e-run.txt

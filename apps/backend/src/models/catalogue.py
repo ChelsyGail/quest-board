@@ -33,7 +33,9 @@ ProofInstructions = Annotated[
 PointValue = Annotated[int, Field(ge=1, le=10000)]
 TimeZoneName = Annotated[str, StringConstraints(min_length=1, max_length=64)]
 
-QUEST_ONLY_FIELDS = frozenset({"proof_instructions", "point_value"})
+QUEST_ONLY_FIELDS = frozenset(
+    {"proof_instructions", "point_value", "requires_text_proof", "requires_media_proof"}
+)
 
 
 class ItemKind(StrEnum):
@@ -100,6 +102,9 @@ class EventCreate(ItemCreate):
 class QuestCreate(ItemCreate):
     proof_instructions: ProofInstructions
     point_value: PointValue
+    # BE-38: with both off, any non-empty proof (text or a file) is enough.
+    requires_text_proof: bool = False
+    requires_media_proof: bool = False
 
 
 class ItemUpdate(BaseModel):
@@ -116,6 +121,8 @@ class ItemUpdate(BaseModel):
     category: ItemCategory | None = None
     proof_instructions: ProofInstructions | None = None
     point_value: PointValue | None = None
+    requires_text_proof: bool | None = None
+    requires_media_proof: bool | None = None
 
     @field_validator("time_zone")
     @classmethod
@@ -145,6 +152,9 @@ class ItemAttributes(BaseModel):
     time_zone: str
     category: str
     proof_instructions: str | None
+    # Null on events, like the other quest-only fields.
+    requires_text_proof: bool | None = None
+    requires_media_proof: bool | None = None
     point_value: int | None
     status: ItemStatus
     published_at: datetime | None

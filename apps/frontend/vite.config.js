@@ -12,6 +12,12 @@ export default defineConfig({
       VITE_API_BASE_URL: "http://api.test",
       VITE_QUESTS_ENABLED: "false",
       VITE_QUESTS_DEMO: "false",
+      VITE_DISCUSSIONS_DEMO: "false",
+      VITE_DISCUSSIONS_API: "false",
+      VITE_PROOFS_DEMO: "false",
+      VITE_PROOFS_API: "false",
+      VITE_REWARDS_DEMO: "false",
+      VITE_REWARDS_API: "false",
     },
   },
 });

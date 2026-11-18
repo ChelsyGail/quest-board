@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { getQuestClient, isItemNotFound, questApiUnavailableMessage } from "./api.js";
 import { formatItemWindow } from "./dates.js";
+import { resolveQuestDiscussionPhase } from "./discussions.js";
 import { itemKindLabel } from "./format.js";
+import { participationStatusLabel } from "./myQuests.js";
+import QuestDiscussion from "./QuestDiscussion.jsx";
 import { bannerClassName } from "./questBanners.js";
 import {
   EMPTY_FILTERS,
@@ -9,6 +12,7 @@ import {
   categoryOptions,
   filtersActive as hasActiveFilters,
 } from "./questFilters.js";
+import ProofSubmit from "./ProofSubmit.jsx";
 import QuestCard from "./QuestCard.jsx";
 
 const SEARCH_DELAY_MS = 300;
@@ -31,7 +35,17 @@ function countLabel(count) {
 // Published quests and events (GET /items), their details (GET /items/{id}) and joining or
 // RSVPing (POST /items/{id}/join, QB-90). Search, category, dates and paging all happen on
 // the server, so every page is part of the complete filtered catalogue.
-function QuestBoard({ session, canJoin, onSessionExpired }) {
+// `initialItem` opens straight on that item's details, and `onBack` then replaces going
+// back to the list (used when another page opened the item). `author` is { id, name }.
+function QuestBoard({
+  session,
+  canJoin,
+  onSessionExpired,
+  author,
+  initialItem = null,
+  onBack = null,
+  backLabel = "← All quests and events",
+}) {
   const client = getQuestClient(session);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [searchQuery, setSearchQuery] = useState("");
@@ -51,11 +65,14 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
   const [participationAttempt, setParticipationAttempt] = useState(0);
 
   // The item opened from the list, and its current details from the backend.
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(initialItem);
   const [detail, setDetail] = useState({ status: "idle", item: null });
   const [isJoining, setIsJoining] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+  // Authoritative proof submission for the open quest (from ProofSubmit), not guessed from join status.
+  const [proofByItem, setProofByItem] = useState(() => new Map());
 
   const query = useMemo(
     () => catalogueQuery({ ...filters, query: searchQuery }, page),
@@ -75,7 +92,8 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
   }, [filters.query, searchQuery]);
 
   useEffect(() => {
-    if (query.error) return undefined;
+    // Opened on one item from another page: the catalogue isn't shown, so isn't loaded.
+    if (query.error || onBack) return undefined;
     // Cleared when the query changes, so an older response can't replace a newer one.
     let ignore = false;
 
@@ -193,11 +211,21 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
   }
 
   function closeItem() {
+    if (onBack) {
+      onBack();
+      return;
+    }
     setSelected(null);
     setDetail({ status: "idle", item: null });
   }
 
   function itemGone(item) {
+    if (onBack) {
+      // Opened from another page, e.g. an archived item in My quests: keep showing what
+      // that page had rather than leaving it.
+      setDetail({ status: "gone", item: null });
+      return;
+    }
     closeItem();
     setActionError(`"${item.title}" is no longer available.`);
     setLoadAttempt((attempt) => attempt + 1);
@@ -218,7 +246,81 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
     setParticipations((current) => new Map(current).set(itemId, participation));
   }
 
-  async function checkWhetherJoined(item, error) {
+  function markLeft(itemId) {
+    setParticipations((current) => {
+      const next = new Map(current);
+      next.delete(itemId);
+      return next;
+    });
+    setProofByItem((current) => {
+      const next = new Map(current);
+      next.delete(itemId);
+      return next;
+    });
+  }
+
+  function canLeaveParticipation(item, participation, proofSubmission) {
+    if (!participation) return false;
+    if (proofSubmission && ["pending", "rejected", "approved"].includes(proofSubmission.status)) {
+      return false;
+    }
+    if (item.kind === "event") return participation.status === "joined";
+    return participation.status === "joined";
+  }
+
+  async function handleLeave(item) {
+    if (isLeaving || isJoining || !participations.has(item.id)) return;
+    if (Date.now() >= Date.parse(session.expiresAt)) {
+      onSessionExpired();
+      return;
+    }
+    const leaveLabel =
+      item.kind === "event" ? `Cancel RSVP for "${item.title}"?` : `Leave "${item.title}"?`;
+    if (!window.confirm(`${leaveLabel} Your place will be removed if you haven't submitted proof.`)) {
+      return;
+    }
+    setIsLeaving(true);
+    setActionError("");
+    setActionMessage("");
+    try {
+      await client.leaveItem(item.id);
+      markLeft(item.id);
+      setActionMessage(
+        item.kind === "event"
+          ? `RSVP cancelled for "${item.title}".`
+          : `You left "${item.title}".`
+      );
+    } catch (error) {
+      if (error.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      if (error.status === 409 && error.code === "proof_already_submitted") {
+        setActionError(
+          `You can't leave "${item.title}" after submitting proof. Your participation and proof history stay on record.`
+        );
+        setParticipationAttempt((attempt) => attempt + 1);
+      } else if (error.status === 404 && (error.code === "not_joined" || error.code === "not_found")) {
+        markLeft(item.id);
+        setActionMessage(`You're not joined to "${item.title}".`);
+        setParticipationAttempt((attempt) => attempt + 1);
+      } else if (error.resultUnknown) {
+        setActionError(
+          `We couldn't confirm whether you left "${item.title}". Reload My Quests before trying again.`
+        );
+        setParticipationAttempt((attempt) => attempt + 1);
+      } else {
+        setActionError(
+          `Couldn't leave "${item.title}". ` +
+            questApiUnavailableMessage(error, `leave "${item.title}"`)
+        );
+      }
+    } finally {
+      setIsLeaving(false);
+    }
+  }
+
+  async function checkWhetherJoined(item, error, { successMessage } = {}) {
     let list;
     try {
       list = await client.listMyParticipations();
@@ -237,7 +339,7 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
     const entry = list.find((candidate) => candidate.item.id === item.id && candidate.participation);
     if (entry) {
       markJoined(item.id, entry.participation);
-      setActionMessage(joinedLabel(item));
+      setActionMessage(successMessage || joinedLabel(item));
     } else {
       setActionError(
         `We couldn't confirm whether you joined "${item.title}". ${error.message} ` +
@@ -268,8 +370,10 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
       if (error.resultUnknown) {
         await checkWhetherJoined(item, error);
       } else if (error.status === 409 && error.code === "already_joined") {
-        markJoined(item.id, { itemId: item.id, status: "joined" });
-        setActionMessage(`You've already joined "${item.title}".`);
+        // Reload so proof uses the real participation id, never a placeholder.
+        await checkWhetherJoined(item, error, {
+          successMessage: `You've already joined "${item.title}".`,
+        });
       } else if (isItemNotFound(error)) {
         itemGone(item);
       } else if (error.status === 403) {
@@ -306,21 +410,55 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
   if (selected) {
     const shown = detail.item || selected;
     const isQuest = shown.kind !== "event";
-    const joined = participations.has(shown.id);
-    content = (
-      <article className="quest-detail panel" aria-labelledby="quest-detail-title">
-        <button type="button" className="link-button small" onClick={closeItem}>
-          ← All quests and events
-        </button>
-        <div className={`${bannerClassName(shown.category)} quest-detail-banner`} aria-hidden="true">
+    const participation = participations.get(shown.id);
+    const proofSubmission = proofByItem.get(shown.id) || null;
+    const displayStatus = proofSubmission?.status || participation?.status;
+    const joined = Boolean(participation);
+    const showStatus = displayStatus && displayStatus !== "joined";
+    const withWorkspace = isQuest && canJoin;
+    const discussionPhase = resolveQuestDiscussionPhase(
+      participation,
+      participationStatus,
+      proofSubmission
+    );
+    const discussionSpace = discussionPhase.phase === "submitted" ? "submitted" : "active";
+    const proofParticipationStatus =
+      proofSubmission?.status === "pending" || proofSubmission?.status === "approved"
+        ? proofSubmission.status
+        : participation?.status === "rejected" || proofSubmission?.status === "rejected"
+          ? "rejected"
+          : participation?.status || "joined";
+
+    const mainPanel = (
+      <article
+        className={`quest-detail panel${withWorkspace ? " quest-workspace-main" : ""}`}
+        aria-labelledby="quest-detail-title"
+      >
+        <div
+          className={`${bannerClassName(shown.category)} quest-detail-banner quest-detail-banner-hero`}
+          aria-hidden="true"
+        >
           <span className="quest-banner-stamp">{itemKindLabel(shown.kind)}</span>
         </div>
         <div className="request-heading quest-detail-heading">
-          <h3 className="section-title" id="quest-detail-title">
+          <h2 className="quest-detail-title" id="quest-detail-title">
             {shown.title}
-          </h3>
-          {joined && <span className="badge badge-joined">{isQuest ? "Joined" : "Going"}</span>}
+          </h2>
+          {showStatus ? (
+            <span className={`badge status-${displayStatus}`}>
+              {displayStatus === "pending" && isQuest
+                ? "Pending review"
+                : participationStatusLabel(displayStatus)}
+            </span>
+          ) : (
+            joined && <span className="badge badge-joined">{isQuest ? "Joined" : "Going"}</span>
+          )}
         </div>
+        {detail.status === "gone" && (
+          <p className="small muted" role="status">
+            This is no longer on the board, so these are the last details we had.
+          </p>
+        )}
         {detail.status === "loading" && (
           <p className="small muted" role="status">
             Checking for the latest details…
@@ -331,52 +469,53 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
             These details may be out of date. {detail.error}
           </p>
         )}
-        <div className="quest-card-meta">
-          <span className="badge badge-category">{shown.category || "Campus"}</span>
-          {isQuest && <span className="badge badge-points">{shown.pointValue ?? "—"} pts</span>}
-        </div>
-        <dl className="quest-facts small">
-          <dt>When</dt>
-          <dd>{formatItemWindow(shown.startsAt, shown.endsAt, shown.timeZone)}</dd>
-          <dt>Time zone</dt>
-          <dd>{shown.timeZone.replace(/_/g, " ")}</dd>
-          <dt>Where</dt>
-          <dd>{shown.location}</dd>
-          <dt>Category</dt>
-          <dd>{shown.category}</dd>
+        <ul className="quest-summary" aria-label="Quest summary">
+          <li>
+            <span className="quest-summary-label">When</span>
+            <span>{formatItemWindow(shown.startsAt, shown.endsAt, shown.timeZone)}</span>
+          </li>
+          <li>
+            <span className="quest-summary-label">Where</span>
+            <span>{shown.location}</span>
+          </li>
+          <li>
+            <span className="quest-summary-label">Category</span>
+            <span>{shown.category || "Campus"}</span>
+          </li>
           {isQuest && (
-            <>
-              <dt>Points</dt>
-              <dd>{shown.pointValue}</dd>
-            </>
+            <li>
+              <span className="quest-summary-label">Points</span>
+              <span>{shown.pointValue ?? "—"}</span>
+            </li>
           )}
-        </dl>
-        <p className="quest-text">{shown.description}</p>
-        {isQuest && (
-          <>
-            <h4 className="quest-subtitle">How to show you did it</h4>
-            <p className="quest-text">{shown.proofInstructions}</p>
-          </>
-        )}
-
-        {joined ? (
-          <p className="message quest-joined">
-            {isQuest ? "You've joined this quest." : "You're going to this event."}
+          <li>
+            <span className="quest-summary-label">Time zone</span>
+            <span>{shown.timeZone.replace(/_/g, " ")}</span>
+          </li>
+        </ul>
+        <div className="quest-detail-body">
+          <p className="quest-text">{shown.description}</p>
+          {isQuest && (
+            <div className="quest-proof-block">
+              <h3 className="quest-subtitle">How to show you did it</h3>
+              <p className="quest-text">{shown.proofInstructions}</p>
+            </div>
+          )}
+        </div>
+        {joined && isQuest && displayStatus === "pending" && (
+          <p className="message quest-joined" role="status">
+            Your proof is pending review.
           </p>
-        ) : canJoin ? (
-          <button
-            type="button"
-            className="button button-inline"
-            onClick={() => handleJoin(shown)}
-            disabled={isJoining}
-          >
-            {isJoining ? (isQuest ? "Joining…" : "Sending RSVP…") : isQuest ? "Join quest" : "RSVP"}
-          </button>
-        ) : (
-          <p className="hint">Only students can join quests or RSVP to events.</p>
         )}
-        {!joined && participationStatus === "error" && (
-          <p className="hint">We couldn't check whether you've already joined this one.</p>
+        {joined && isQuest && displayStatus === "rejected" && (
+          <p className="message quest-joined" role="status">
+            Your proof was rejected. Check feedback on the proof panel to resubmit.
+          </p>
+        )}
+        {joined && isQuest && displayStatus === "approved" && (
+          <p className="message quest-joined" role="status">
+            Your proof was approved.
+          </p>
         )}
         <p className="form-error form-error-left" role="alert">
           {actionError}
@@ -385,6 +524,147 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
           {actionMessage}
         </p>
       </article>
+    );
+
+    const actionsPanel = (
+      <aside className="quest-workspace-actions" aria-label="Participation and proof">
+        {!joined && detail.status !== "gone" && canJoin && (
+          <section className="panel">
+            <h3 className="section-title">Join</h3>
+            <p className="hint">
+              {isQuest
+                ? "Joining unlocks proof submission and the active participants discussion."
+                : "RSVP to mark that you're going."}
+            </p>
+            <button
+              type="button"
+              className="button"
+              onClick={() => handleJoin(shown)}
+              disabled={isJoining}
+            >
+              {isJoining ? (isQuest ? "Joining…" : "Sending RSVP…") : isQuest ? "Join quest" : "RSVP"}
+            </button>
+          </section>
+        )}
+        {!joined && !canJoin && (
+          <section className="panel">
+            <p className="hint">Only students can join quests or RSVP to events.</p>
+          </section>
+        )}
+        {!joined && participationStatus === "error" && (
+          <p className="hint">We couldn't check whether you've already joined this one.</p>
+        )}
+        {joined &&
+          canJoin &&
+          canLeaveParticipation(shown, participation, proofSubmission) && (
+            <section className="panel">
+              <h3 className="section-title">{isQuest ? "Leave quest" : "Cancel RSVP"}</h3>
+              <p className="hint">
+                {isQuest
+                  ? "You can leave before submitting proof. After proof is submitted, your place stays on record."
+                  : "Cancel your RSVP if you can no longer attend."}
+              </p>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => handleLeave(shown)}
+                disabled={isLeaving || isJoining}
+              >
+                {isLeaving
+                  ? isQuest
+                    ? "Leaving…"
+                    : "Cancelling…"
+                  : isQuest
+                    ? "Leave quest"
+                    : "Cancel RSVP"}
+              </button>
+            </section>
+          )}
+        {isQuest && canJoin && joined && (
+          <ProofSubmit
+            session={{
+              token: session.token,
+              userId: session.userId,
+              userName: author?.name,
+            }}
+            item={shown}
+            participationId={participation?.id}
+            participationStatus={proofParticipationStatus}
+            onSessionExpired={onSessionExpired}
+            onProofState={(submission) => {
+              setProofByItem((current) => {
+                const next = new Map(current);
+                if (submission) next.set(shown.id, submission);
+                else next.delete(shown.id);
+                return next;
+              });
+            }}
+            onSubmitted={(submission) => {
+              setProofByItem((current) => {
+                const next = new Map(current);
+                next.set(shown.id, submission);
+                return next;
+              });
+              // Keep membership; sync proof-phase status for My Quests labels without calling Leave.
+              setParticipations((current) => {
+                const next = new Map(current);
+                const previous = next.get(shown.id) || {
+                  id: `local-${shown.id}`,
+                  itemId: shown.id,
+                  status: "joined",
+                };
+                next.set(shown.id, {
+                  ...previous,
+                  status: submission.status,
+                  proofStatus: submission.status,
+                });
+                return next;
+              });
+            }}
+          />
+        )}
+      </aside>
+    );
+
+    const discussionsPanel = withWorkspace ? (
+      <aside className="quest-workspace-discussions" aria-label="Quest discussions">
+        <QuestDiscussion
+          quest={shown}
+          space={discussionSpace}
+          participation={participation}
+          participationStatus={participationStatus}
+          proofSubmission={proofSubmission}
+          author={author}
+          onSessionExpired={onSessionExpired}
+          compact
+          showPrototypeNotice={false}
+        />
+        {discussionSpace === "active" && (
+          <p className="discussion-alt-hint muted small">
+            After you submit proof, a separate after-submission discussion unlocks (spoilers
+            allowed).
+          </p>
+        )}
+        {discussionSpace === "submitted" && (
+          <p className="discussion-alt-hint muted small">
+            The active participants discussion is closed so spoilers stay out of unfinished
+            quests.
+          </p>
+        )}
+      </aside>
+    ) : null;
+
+    content = withWorkspace ? (
+      <div className="quest-workspace">
+        {discussionsPanel}
+        {mainPanel}
+        {actionsPanel}
+      </div>
+    ) : (
+      <div className="quest-detail-layout quest-detail-layout-simple">
+        {mainPanel}
+        {actionsPanel}
+      </div>
     );
   } else {
     let results;
@@ -592,6 +872,23 @@ function QuestBoard({ session, canJoin, onSessionExpired }) {
         </p>
       </>
     );
+  }
+
+  if (selected) {
+    return (
+      <div className="page-stack quest-workspace-page">
+        <nav className="quest-workspace-crumb" aria-label="Breadcrumb">
+          <button type="button" className="link-button" onClick={closeItem}>
+            {backLabel}
+          </button>
+        </nav>
+        {content}
+      </div>
+    );
+  }
+
+  if (onBack) {
+    return <div className="page-stack discovery-page">{content}</div>;
   }
 
   return (

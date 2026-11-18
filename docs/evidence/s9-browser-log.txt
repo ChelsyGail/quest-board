@@ -1,0 +1,21 @@
+reg Student 201
+reg Organizer 201
+reg Moderator 201
+roles elevated
+api rewards page2 status=200 n=10
+media quest item=293 part=96
+leave quest item=294
+submitted media=9
+student rewards Next buttons=1
+leave button visible=1
+after leave body: join
+proof panel: 
+student submitted img count=0
+mod queue Next=0
+
+Follow-up:
+- Rewards pagination: Page 2 of 2 · 30 rewards (s9-01)
+- Leave quest button visible + after leave Join returned (s9-02 / log)
+- Proof labels "Photo or video REQUIRED" + submitted img=1 (s9-03)
+- Create quest checkbox row styled (s9-04)
+- Moderator pagination Page 1 of 2 · 28 pending + Next (s9-05 / s9-05b)

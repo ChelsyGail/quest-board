@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, createEvent } from "./api.js";
 import CreateEvent from "./CreateEvent.jsx";
 import { browserTimeZone } from "./dates.js";
@@ -37,12 +37,14 @@ function renderPage() {
 }
 
 async function fillForm(user) {
+  // Text via userEvent; datetime-local via change — user.type on datetime is slow and
+  // flakes under parallel suite load without testing app behavior.
   await user.type(screen.getByLabelText("Title"), "  Board games night ");
   await user.type(screen.getByLabelText("Description"), "Bring a game.");
   await user.type(screen.getByLabelText("Location"), "Student lounge");
   await user.type(screen.getByLabelText("Category"), "Games");
-  await user.type(screen.getByLabelText("Starts"), "2026-11-01T18:30");
-  await user.type(screen.getByLabelText("Ends"), "2026-11-01T21:00");
+  fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-11-01T18:30" } });
+  fireEvent.change(screen.getByLabelText("Ends"), { target: { value: "2026-11-01T21:00" } });
 }
 
 const saveButton = () => screen.getByRole("button", { name: "Save event" });
@@ -51,6 +53,10 @@ beforeEach(() => {
   vi.resetAllMocks();
   browserTimeZone.mockReturnValue("Europe/Paris");
   createEvent.mockResolvedValue(createdEvent());
+});
+
+afterEach(() => {
+  cleanup();
 });
 
 describe("Create event form (FE-12)", () => {

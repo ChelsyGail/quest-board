@@ -28,7 +28,12 @@ export const ITEM_FIELDS = [
 ];
 
 // Fields only quests have.
-export const QUEST_FIELDS = ["proof_instructions", "point_value"];
+export const QUEST_FIELDS = [
+  "proof_instructions",
+  "point_value",
+  "requires_text_proof",
+  "requires_media_proof",
+];
 
 export function itemFields(kind) {
   return kind === "quest" ? [...ITEM_FIELDS, ...QUEST_FIELDS] : ITEM_FIELDS;
@@ -67,6 +72,8 @@ export function itemFormValues(item) {
   if (item.kind === "quest") {
     values.proof_instructions = item.proofInstructions;
     values.point_value = item.pointValue === null ? "" : String(item.pointValue);
+    values.requires_text_proof = Boolean(item.requiresTextProof);
+    values.requires_media_proof = Boolean(item.requiresMediaProof);
   }
   return values;
 }
@@ -86,6 +93,8 @@ export function itemPayload(values, kind = "event") {
   if (kind === "quest") {
     payload.proof_instructions = values.proof_instructions.trim();
     payload.point_value = Number(values.point_value);
+    payload.requires_text_proof = Boolean(values.requires_text_proof);
+    payload.requires_media_proof = Boolean(values.requires_media_proof);
   }
   return payload;
 }
@@ -258,6 +267,31 @@ function ItemForm({
             />
             {errorFor("point_value")}
           </div>
+
+          <fieldset className="field proof-requirements">
+            <legend>Proof requirements</legend>
+            <p className="hint" id="item-proof-requirements-hint">
+              Optional. When both are off, any non-empty text or media proof is enough.
+            </p>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={Boolean(values.requires_text_proof)}
+                onChange={(event) => change("requires_text_proof", event.target.checked)}
+                aria-describedby="item-proof-requirements-hint"
+              />
+              Require written proof
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={Boolean(values.requires_media_proof)}
+                onChange={(event) => change("requires_media_proof", event.target.checked)}
+                aria-describedby="item-proof-requirements-hint"
+              />
+              Require photo or video proof
+            </label>
+          </fieldset>
         </>
       )}
 
@@ -274,7 +308,7 @@ function ItemForm({
           Cancel
         </button>
       )}
-      <p className="form-error" role="alert">
+      <p className="form-error" role={formError ? "alert" : undefined}>
         {formError}
       </p>
     </form>

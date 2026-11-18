@@ -1,0 +1,10 @@
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+ RUN  v5.0.3 /Users/mohamedtahakhorchani/Documents/quest-board/apps/frontend
+
+
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+   Start at  14:37:31
+   Duration  2.82s (environment 82%, transform 11%, setup 5%, import 1%)
+

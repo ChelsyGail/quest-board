@@ -174,10 +174,8 @@ class ParticipationService:
     def leave_item(self, user_id: int, item_id: int) -> None:
         """Drops the student's participation so their plans and reminders match.
 
-        Refused once the participation has moved past Joined: Pending, Approved
-        and Rejected all mean proof was submitted, and that history has to
-        survive (BE-31). When the submissions table lands with the proof
-        tickets, this check becomes "a submission exists for this attempt".
+        Refused once proof history exists (BE-31): any participation status past
+        Joined, or a row with current_submission_id set, keeps the attempt.
 
         If the student is in a quest group, membership is removed in the same
         transaction (and the group is closed when they were the last member),
@@ -187,7 +185,10 @@ class ParticipationService:
         with self.engine.begin() as connection:
             row = connection.execute(
                 text(
-                    f"""{SELECT_PARTICIPATION_COLUMNS}
+                    """
+                    SELECT participation_id, user_id, item_id, status,
+                           current_submission_id, created_at
+                    FROM participations
                     WHERE user_id = :user_id AND item_id = :item_id
                     FOR UPDATE
                     """
@@ -196,12 +197,16 @@ class ParticipationService:
             ).one_or_none()
             if row is None:
                 raise NotJoinedError
-            if row.status != ParticipationStatus.JOINED.value:
+            if (
+                row.status != ParticipationStatus.JOINED.value
+                or row.current_submission_id is not None
+            ):
                 logger.info(
                     "Refused to leave an item with proof behind it",
                     extra={
                         "participation_id": row.participation_id,
                         "status": row.status,
+                        "current_submission_id": row.current_submission_id,
                     },
                 )
                 raise ParticipationLockedError

@@ -1,0 +1,21 @@
+Candidate branch: taha-final-sprint-integration
+Feature candidate SHA: a258346aae550a3ad67b9427b4e59ae50eb6cb69
+Validate git rev-parse HEAD after fetch (docs-only stamp commits may sit on tip).
+
+REG Student 201 id=47
+REG Organizer 201 id=48
+REG Moderator 201 id=49
+QUEST=208 PART=62
+ACTIVE_POST HTTP=201 {"data":{"type":"discussion-threads","id":"1","attributes":{"scope":"quest:208:active","title":"Need a teammate","category":"teammates","body":"Anyone free Thur
+SUBMITTED_BEFORE HTTP=403 {"errors":[{"status":"403","code":"not_a_member","title":"Not a member","detail":"You cannot read or post in this discus
+SUBMIT1=9
+ACTIVE_AFTER HTTP=403 {"errors":[{"status":"403","code":"not_a_member","title":"Not a member","detail":"You cannot read or
+SUBMITTED_POST HTTP=201 {"data":{"type":"discussion-threads","id":"2","attributes":{"scope":"quest:208:submitted","title":"After submit","category":"tips","body":"Here is what I tried"
+REJECT HTTP=201 {"data":{"type":"reviews","id":"2","attributes":{"submission_id":"9","participation_id":"62","reviewer_id":"49","decision":"rejected","feedback":"Need more detail","reviewed_at":"2
+ACTIVE_AFTER_REJECT HTTP=403 {"errors":[{"status":"403","code":"not_a_member","title":"Not a member","detail":"You cannot read or
+RESUBMIT=10 {"data":{"type":"submissions","id":"10","attributes":{"participation_id":"62","item_id":"208","user_id":"47","attempt_number":2,"text":"Second attempt with more
+APPROVE HTTP=201 {"data":{"type":"reviews","id":"3","attributes":{"submission_id":"10","participation_id":"62","reviewer_id":"49","decision":"approved","reviewed_at":"2026-11-18T13:57:09.707990Z","points_awarded":20,"
+ACH 20 20
+GROVE HTTP=201 {"data":{"type":"discussion-threads","id":"3","attributes":{"scope":"grove","title":"Quiet study spots","category":"campus-life","body":"Lib
+SELF_APPROVE HTTP=403 {"errors":[{"status":"403","code":"request_rejected","title":"Request rejected","detail":"Insufficient role"}]}
+DONE SHA_PENDING accounts stu=s7-16b728@aup.edu

@@ -36,6 +36,8 @@ const PAYLOAD = {
   category: "Volunteering",
   proof_instructions: "A photo of your full bag.",
   point_value: 50,
+  requires_text_proof: false,
+  requires_media_proof: false,
 };
 
 function quest(overrides) {
@@ -255,12 +257,14 @@ describe("Create quest form (QB-58)", () => {
 
   it("ends the session instead of saving once the token has expired", async () => {
     const user = userEvent.setup();
+    const realNow = Date.now();
     const props = renderForm({
-      session: { ...SESSION, expiresAt: new Date(Date.now() + 60000).toISOString() },
+      session: { ...SESSION, expiresAt: new Date(realNow + 60000).toISOString() },
     });
     await fillForm(user);
 
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 120000);
+    // Capture wall time before spying — mockReturnValue(Date.now()+…) would recurse.
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(realNow + 120000);
     try {
       await submit(user);
     } finally {
@@ -269,6 +273,22 @@ describe("Create quest form (QB-58)", () => {
 
     expect(props.onSessionExpired).toHaveBeenCalledTimes(1);
     expect(createQuest).not.toHaveBeenCalled();
+  });
+
+  it("sends structured proof requirement flags", async () => {
+    const user = userEvent.setup();
+    createQuest.mockResolvedValue(quest());
+    renderForm();
+
+    await fillForm(user);
+    await user.click(screen.getByLabelText("Require written proof"));
+    await user.click(screen.getByLabelText("Require photo or video proof"));
+    await submit(user);
+
+    expect(createQuest).toHaveBeenCalledWith(
+      { ...PAYLOAD, requires_text_proof: true, requires_media_proof: true },
+      "tok"
+    );
   });
 
   it("never resubmits when the result is unknown, and asks the page to check the list", async () => {

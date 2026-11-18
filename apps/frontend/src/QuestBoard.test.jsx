@@ -1,19 +1,28 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, getItem, joinItem, listMyParticipations, listPublishedItems } from "./api.js";
+import {
+  ApiError,
+  getItem,
+  joinItem,
+  leaveItem,
+  listMyParticipations,
+  listPublishedItems,
+} from "./api.js";
 import QuestBoard from "./QuestBoard.jsx";
 
 vi.mock("./api.js", async (importOriginal) => {
   const actual = await importOriginal();
   const getItem = vi.fn();
   const joinItem = vi.fn();
+  const leaveItem = vi.fn();
   const listMyParticipations = vi.fn();
   const listPublishedItems = vi.fn();
   return {
     ...actual,
     getItem,
     joinItem,
+    leaveItem,
     listMyParticipations,
     listPublishedItems,
     questsDemoEnabled: vi.fn(() => false),
@@ -21,6 +30,7 @@ vi.mock("./api.js", async (importOriginal) => {
       isDemo: false,
       getItem: (id) => getItem(id, "tok"),
       joinItem: (id) => joinItem(id, "tok"),
+      leaveItem: (id) => leaveItem(id, "tok"),
       listMyParticipations: () => listMyParticipations("tok"),
       listPublishedItems: (query) => listPublishedItems(query, "tok"),
     }),
@@ -303,7 +313,7 @@ describe("Item details", () => {
     expect(screen.queryByText("Points")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "RSVP" }));
-    expect(await screen.findByText("You're going to this event.")).toBeInTheDocument();
+    expect(await screen.findByText(/You're going to "Open mic"/)).toBeInTheDocument();
     expect(joinItem).toHaveBeenCalledWith("21", "tok");
   });
 
@@ -342,11 +352,57 @@ describe("Joining and RSVP (QB-90)", () => {
 
     expect(joinItem).toHaveBeenCalledWith("11", "tok");
     expect(await screen.findByText('You joined "Campus cleanup".')).toBeInTheDocument();
-    expect(screen.getByText("You've joined this quest.")).toBeInTheDocument();
+    expect(screen.getByText('Joined')).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Join quest" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "← All quests and events" }));
     expect(within(screen.getByRole("list", { name: "Published quests and events" })).getByText("Joined")).toBeInTheDocument();
+  });
+
+  it("lets a student leave before proof and hides leave after proof lock", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    listMyParticipations.mockResolvedValue([joined(quest())]);
+    leaveItem.mockResolvedValue(undefined);
+    renderBoard();
+    await open(user);
+
+    expect(screen.getByRole("button", { name: "Leave quest" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Leave quest" }));
+    expect(leaveItem).toHaveBeenCalledWith("11", "tok");
+    expect(await screen.findByText(/You left "Campus cleanup"/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Join quest" })).toBeInTheDocument();
+  });
+
+  it("surfaces authoritative leave 409 after proof without clearing membership", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    listMyParticipations.mockResolvedValue([joined(quest())]);
+    leaveItem.mockRejectedValue(
+      new ApiError("Proof already submitted", 409, {}, "proof_already_submitted")
+    );
+    renderBoard();
+    await open(user);
+    await user.click(screen.getByRole("button", { name: "Leave quest" }));
+    expect(
+      await screen.findByText(/can't leave .* after submitting proof/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText("Joined")).toBeInTheDocument();
+  });
+
+  it("opens the quest discussion only once the student has joined", async () => {
+    const user = userEvent.setup();
+    joinItem.mockResolvedValue({ id: "p11", itemId: "11", status: "joined" });
+    renderBoard();
+    await open(user);
+
+    const active = screen.getByRole("region", { name: "Active participants" });
+    expect(active).toHaveTextContent(/Only students who joined this quest/);
+    expect(screen.queryByRole("region", { name: /After submission/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/after-submission discussion unlocks/i)).toBeInTheDocument();
+    await user.click(joinButton());
+    await screen.findByText('You joined "Campus cleanup".');
+    expect(active).toHaveTextContent("Quest discussions aren't available yet");
   });
 
   it("restores the joined status after a refresh from /me/participations", async () => {
@@ -356,7 +412,7 @@ describe("Joining and RSVP (QB-90)", () => {
 
     await open(user);
 
-    expect(screen.getByText("You've joined this quest.")).toBeInTheDocument();
+    expect(screen.getByText("Joined")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Join quest" })).not.toBeInTheDocument();
   });
 
@@ -374,19 +430,23 @@ describe("Joining and RSVP (QB-90)", () => {
 
     expect(joinItem).toHaveBeenCalledTimes(1);
     finish({ id: "p11", itemId: "11", status: "joined" });
-    expect(await screen.findByText("You've joined this quest.")).toBeInTheDocument();
+    expect(await screen.findByText('Joined')).toBeInTheDocument();
   });
 
   it("treats only the already_joined conflict as joined", async () => {
     const user = userEvent.setup();
     joinItem.mockRejectedValue(new ApiError("You have already joined this item.", 409, {}, "already_joined"));
+    // Reload after already_joined must return the real participation id for proof.
+    listMyParticipations
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([joined(quest())]);
     renderBoard();
 
     await open(user);
     await user.click(joinButton());
 
     expect(await screen.findByText(`You've already joined "Campus cleanup".`)).toBeInTheDocument();
-    expect(screen.getByText("You've joined this quest.")).toBeInTheDocument();
+    expect(screen.getByText("Joined")).toBeInTheDocument();
   });
 
   it("doesn't treat another conflict as joined", async () => {
@@ -492,7 +552,7 @@ describe("Joining and RSVP (QB-90)", () => {
       await user.click(joinButton());
 
       expect(await screen.findByText('You joined "Campus cleanup".')).toBeInTheDocument();
-      expect(screen.getByText("You've joined this quest.")).toBeInTheDocument();
+      expect(screen.getByText('Joined')).toBeInTheDocument();
       expect(joinItem).toHaveBeenCalledTimes(1);
     });
 
@@ -524,20 +584,21 @@ describe("Joining and RSVP (QB-90)", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "Use Reload to check before trying again."
       );
-      expect(screen.queryByText("You've joined this quest.")).not.toBeInTheDocument();
+      expect(screen.queryByText("Joined")).not.toBeInTheDocument();
       expect(joinItem).toHaveBeenCalledTimes(1);
     });
   });
 
-  it("keeps the open item open after Reload", async () => {
+  it("keeps the detail workspace open without the catalogue header", async () => {
     const user = userEvent.setup();
+    listMyParticipations.mockResolvedValue([joined(quest())]);
     renderBoard();
 
     await open(user);
-    listMyParticipations.mockResolvedValue([joined(quest())]);
-    await user.click(screen.getByRole("button", { name: "Reload" }));
 
-    expect(await screen.findByText("You've joined this quest.")).toBeInTheDocument();
+    expect(await screen.findByText("Joined")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Campus cleanup" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /next campus adventure/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toBeInTheDocument();
   });
 });

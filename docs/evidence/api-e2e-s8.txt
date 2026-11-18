@@ -1,0 +1,25 @@
+REG Student id=50 email=s8-7b7b70@aup.edu
+REG Organizer id=51 email=o8-7b7b70@aup.edu
+REG Moderator id=52 email=m8-7b7b70@aup.edu
+REG Other id=53 email=x8-7b7b70@aup.edu
+TOKENS ok; STU_ID=50 (student+moderator for self-review)
+PROOF_QUEST item=209 part=63
+LEAVE_JOINED_NO_PROOF HTTP=204 (expect 204)
+SUBMIT_PENDING sub=11
+LEAVE_PENDING HTTP=409 body={"errors":[{"status":"409","code":"proof_already_submitted","title":"Proof already submitted","detail":"You cannot leave an item you have already submitted proo (expect 409 locked)
+64	pending	11
+LEAVE_REJECTED HTTP=409 body={"errors":[{"status":"409","code":"proof_already_submitted","title":"Proof already submitted","detail":"You cannot leave an item you have already submitted proo (expect 409)
+64	rejected	11
+LEAVE_APPROVED HTTP=409 body={"errors":[{"status":"409","code":"proof_already_submitted","title":"Proof already submitted","detail":"You cannot leave an item you have already submitted proo (expect 409)
+64	approved	12
+LEAVE_NO_PROOF_QUEST item=210 HTTP=204 (expect 204; this is what S6 measured)
+SELF_REVIEW_AS_MOD HTTP=403 code=self_review (expect 403 self_review)
+MEDIA_OWNER HTTP=200 OTHER HTTP=403 body={"errors":[{"status":"403","code":"media_forbidden","title":"Not allowed to view this file","detail":"Proof files are vi
+DUP_SUBMIT HTTP=409 code=attempt_pending
+APPROVE1 HTTP=201 APPROVE2 HTTP=200 code2=None
+POINTS_BEFORE_CLAIM available=30 reward=3
+CLAIM_PARALLEL original reward=3 c1=201 c2=409
+CLAIM_PARALLEL fresh reward=4 c1=201 c2=409 CLAIM_ROWS=1
+APPROVE2 idempotent replay HTTP=200 (same moderator retry) — verify one review row:
+0
+DONE

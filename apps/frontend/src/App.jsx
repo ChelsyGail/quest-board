@@ -8,10 +8,17 @@ import {
   resetDemoQuests,
   roleRequestsEnabled,
 } from "./api.js";
+import { resetDemoDiscussions } from "./discussionsDemo.js";
+import JoinedQuests from "./JoinedQuests.jsx";
 import Login from "./Login.jsx";
+import ModeratorQueue from "./ModeratorQueue.jsx";
 import MyQuests from "./MyQuests.jsx";
 import Profile from "./Profile.jsx";
+import { resetDemoProofs } from "./proofs.js";
 import QuestBoard from "./QuestBoard.jsx";
+import QuestGrove from "./QuestGrove.jsx";
+import RewardsPage, { OrganizerRewards } from "./RewardsPage.jsx";
+import { resetDemoRewards } from "./rewards.js";
 import Signup from "./Signup.jsx";
 
 // The session is { token, userId, expiresAt } and is never stored with a password.
@@ -140,9 +147,12 @@ function App() {
   const [profileStatus, setProfileStatus] = useState("loading");
   const [profileError, setProfileError] = useState("");
   const [profileAttempt, setProfileAttempt] = useState(0);
-  // When signed in: "account", "quests", "my-quests", "create-event" or "admin".
+  // When signed in: "account", "quests", "joined", "my-quests", "grove", "create-event" or
+  // "admin".
   const [page, setPage] = useState(defaultSignedInPage);
   const [openCreate, setOpenCreate] = useState(false);
+  // An item opened from My quests, whose details replace that page until Back.
+  const [openedItem, setOpenedItem] = useState(null);
   const [demoVersion, setDemoVersion] = useState(0);
   const [isResettingDemo, setIsResettingDemo] = useState(false);
   const demoMode = questsDemoEnabled();
@@ -154,6 +164,7 @@ function App() {
     setProfileStatus("loading");
     setPage(defaultSignedInPage());
     setOpenCreate(false);
+    setOpenedItem(null);
     setScreen("login");
     setNotice(message);
   }
@@ -218,6 +229,7 @@ function App() {
     setProfileStatus("loading");
     setPage(defaultSignedInPage());
     setOpenCreate(false);
+    setOpenedItem(null);
     setSession(newSession);
     setNotice(message);
   }
@@ -236,12 +248,17 @@ function App() {
   function showPage(name, options = {}) {
     setPage(name);
     setOpenCreate(Boolean(options.openCreate));
+    setOpenedItem(null);
     setNotice("");
   }
 
   async function handleResetDemo() {
     if (isResettingDemo || !demoMode) return;
     setIsResettingDemo(true);
+    setOpenedItem(null);
+    resetDemoDiscussions();
+    resetDemoProofs();
+    resetDemoRewards();
     await resetDemoQuests();
     setDemoVersion((version) => version + 1);
     setIsResettingDemo(false);
@@ -286,11 +303,23 @@ function App() {
     const questsOn = questsEnabled();
     const showAdmin = roles.includes("admin") && roleRequestsEnabled();
     const isOrganizer = roles.includes("organizer");
+    const isStudent = roles.includes("student");
+    const isModerator = roles.includes("moderator");
+    const author = {
+      id: session.userId,
+      name: profile?.name || "You",
+      token: session.token,
+    };
+    const sessionWithName = { ...session, userName: author.name };
 
     const navPages = [];
     if (profileStatus === "loaded" && questsOn) {
       navPages.push({ id: "quests", label: "Quests" });
+      if (isStudent) navPages.push({ id: "joined", label: "My quests" });
       if (isOrganizer) navPages.push({ id: "my-quests", label: "My items" });
+      navPages.push({ id: "grove", label: "Quest Grove" });
+      if (isStudent || isOrganizer) navPages.push({ id: "rewards", label: "Rewards" });
+      if (isModerator) navPages.push({ id: "moderation", label: "Proof review" });
     }
 
     // The event form always uses the live API, so it isn't offered in demo mode.
@@ -342,9 +371,66 @@ function App() {
         <QuestBoard
           key={`quests-${demoVersion}`}
           session={session}
-          canJoin={roles.includes("student")}
+          canJoin={isStudent}
+          author={author}
           onSessionExpired={handleSessionRejected}
         />
+      );
+    } else if (currentPage === "joined" && openedItem) {
+      body = (
+        <QuestBoard
+          key={`joined-item-${openedItem.id}-${demoVersion}`}
+          session={session}
+          canJoin={isStudent}
+          author={author}
+          initialItem={openedItem}
+          onBack={() => setOpenedItem(null)}
+          backLabel="← My quests"
+          onSessionExpired={handleSessionRejected}
+        />
+      );
+    } else if (currentPage === "joined") {
+      body = (
+        <JoinedQuests
+          key={`joined-${demoVersion}`}
+          session={session}
+          onOpenItem={setOpenedItem}
+          onBrowse={() => showPage("quests")}
+          onSessionExpired={handleSessionRejected}
+        />
+      );
+    } else if (currentPage === "grove") {
+      body = (
+        <QuestGrove
+          key={`grove-${session.userId}-${demoVersion}`}
+          author={author}
+          onSessionExpired={handleSessionRejected}
+        />
+      );
+    } else if (currentPage === "moderation") {
+      body = (
+        <ModeratorQueue
+          key={`moderation-${demoVersion}`}
+          session={sessionWithName}
+          onSessionExpired={handleSessionRejected}
+        />
+      );
+    } else if (currentPage === "rewards") {
+      body = (
+        <div className="page-stack">
+          <RewardsPage
+            key={`rewards-${demoVersion}`}
+            session={sessionWithName}
+            onSessionExpired={handleSessionRejected}
+          />
+          {isOrganizer && (
+            <OrganizerRewards
+              key={`org-rewards-inline-${demoVersion}`}
+              session={sessionWithName}
+              onSessionExpired={handleSessionRejected}
+            />
+          )}
+        </div>
       );
     } else if (currentPage === "my-quests") {
       body = (
@@ -376,10 +462,20 @@ function App() {
       <div className="app-shell">
         {demoMode && (
           <div className="demo-banner" role="status">
-            <span>
-              <strong>Demo mode — sample data.</strong> Quest actions stay in this browser tab and
-              never call the API.
-            </span>
+            <div className="demo-banner-copy">
+              <span>
+                <strong>Demo mode — sample data.</strong> Quest, proof, reward and discussion
+                actions stay in this browser tab.
+              </span>
+              <details className="demo-banner-details">
+                <summary>About sample data</summary>
+                <p>
+                  Posts, proof uploads and reward claims are not shared with other users and are
+                  cleared when this tab closes or you reset demo data. Login still uses the real
+                  API. Production builds hide these sample adapters.
+                </p>
+              </details>
+            </div>
             <button
               type="button"
               className="button button-secondary button-small"
