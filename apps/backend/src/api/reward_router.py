@@ -21,7 +21,9 @@ from models.reward import RewardViewerStatus
 from models.reward import RuleProgressAttributes
 from models.users import UserRole
 from services.reward_service import ClaimRecord
+from services.reward_service import InsufficientPointsError
 from services.reward_service import InvalidRuleQuestError
+from services.reward_service import RewardAlreadyClaimedError
 from services.reward_service import RewardNotEligibleError
 from services.reward_service import RewardNotFoundError
 from services.reward_service import RewardOwnershipError
@@ -136,6 +138,25 @@ def setup_reward_router(app: FastAPI, services: Services):
             )
         except RewardNotFoundError:
             return reward_not_found()
+        except RewardAlreadyClaimedError:
+            return json_api_error_response(
+                RewardErrorResponse,
+                status.HTTP_409_CONFLICT,
+                "reward_already_claimed",
+                "Reward already claimed",
+                "You have already claimed this reward.",
+                "/reward_id",
+            )
+        except InsufficientPointsError as error:
+            return json_api_error_response(
+                RewardErrorResponse,
+                status.HTTP_409_CONFLICT,
+                "insufficient_points",
+                "Not enough points",
+                f"This reward costs {error.point_cost} points and you have "
+                f"{error.available_points} to spend.",
+                "/reward_id",
+            )
         except RewardNotEligibleError as error:
             return json_api_error_response(
                 RewardErrorResponse,

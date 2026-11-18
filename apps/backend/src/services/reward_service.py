@@ -20,6 +20,7 @@ from services.recognition_rules import RuleProgress
 from services.recognition_service import load_balance
 from services.recognition_service import PointBalance
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from utilities.settings import DatabaseSettings
 from utilities.transactions import begin_read_committed
 from utilities.transactions import with_deadlock_retry
@@ -37,6 +38,19 @@ class RewardOwnershipError(Exception):
 
 class InvalidRuleQuestError(Exception):
     """A quest_completed rule must name one of the organizer's own quests."""
+
+
+class RewardAlreadyClaimedError(Exception):
+    """The student already claimed this reward (BE-60)."""
+
+
+class InsufficientPointsError(Exception):
+    """The claim costs more than the student's available points (BE-61)."""
+
+    def __init__(self, point_cost: int, available_points: int):
+        super().__init__(point_cost, available_points)
+        self.point_cost = point_cost
+        self.available_points = available_points
 
 
 class RewardNotEligibleError(Exception):
@@ -281,6 +295,13 @@ class RewardService:
                 raise RewardNotFoundError
             reward = reward_record_from_row(row)
 
+            if _has_claimed(connection, user_id, reward_id):
+                logger.info(
+                    "Claim refused, already claimed",
+                    extra={"reward_id": reward_id, "user_id": user_id},
+                )
+                raise RewardAlreadyClaimedError
+
             progress = evaluate(reward.rule, load_stats(connection, user_id))
             if not progress.met:
                 logger.info(
@@ -289,19 +310,39 @@ class RewardService:
                 )
                 raise RewardNotEligibleError([progress.missing])
 
-            claim_id = connection.execute(
-                text(
-                    """
-                    INSERT INTO reward_claims (reward_id, user_id, points_spent)
-                    VALUES (:reward_id, :user_id, :points_spent)
-                    """
-                ),
-                {
-                    "reward_id": reward_id,
-                    "user_id": user_id,
-                    "points_spent": reward.point_cost,
-                },
-            ).lastrowid
+            # BE-61: the balance is read after the per-user lock, and every
+            # other claim for this student waits on that lock, so two claims
+            # can never both spend the same points.
+            available = load_balance(connection, user_id).available_points
+            if reward.point_cost > available:
+                logger.info(
+                    "Claim refused, not enough points",
+                    extra={
+                        "reward_id": reward_id,
+                        "user_id": user_id,
+                        "point_cost": reward.point_cost,
+                        "available_points": available,
+                    },
+                )
+                raise InsufficientPointsError(reward.point_cost, available)
+
+            try:
+                claim_id = connection.execute(
+                    text(
+                        """
+                        INSERT INTO reward_claims (reward_id, user_id, points_spent)
+                        VALUES (:reward_id, :user_id, :points_spent)
+                        """
+                    ),
+                    {
+                        "reward_id": reward_id,
+                        "user_id": user_id,
+                        "points_spent": reward.point_cost,
+                    },
+                ).lastrowid
+            except IntegrityError as error:
+                # unique_reward_claims_user_reward: the final guard.
+                raise RewardAlreadyClaimedError from error
             if reward.point_cost > 0:
                 connection.execute(
                     text(
@@ -321,7 +362,7 @@ class RewardService:
                 text("SELECT * FROM reward_claims WHERE reward_claim_id = :id"),
                 {"id": claim_id},
             ).one()
-            available = load_balance(connection, user_id).available_points
+            available -= reward.point_cost
 
         logger.info(
             "Recorded reward claim",
@@ -395,6 +436,19 @@ def _claimed_reward_ids(
         {"user_id": user_id},
     ).all()
     return {row.reward_id for row in rows} & wanted
+
+
+def _has_claimed(connection, user_id: int, reward_id: int) -> bool:
+    return (
+        connection.execute(
+            text(
+                "SELECT 1 FROM reward_claims "
+                "WHERE user_id = :user_id AND reward_id = :reward_id"
+            ),
+            {"user_id": user_id, "reward_id": reward_id},
+        ).first()
+        is not None
+    )
 
 
 def to_claim(row, available_points: int | None = None) -> ClaimRecord:
