@@ -101,9 +101,9 @@ Never enable demo and live for the same feature. Live mode must not fall back to
 | `VITE_PROOFS_DEMO` / `VITE_PROOFS_API` | Student proof |
 | `VITE_MODERATION_API` | Moderator queue (needs review routes) |
 | `VITE_REWARDS_DEMO` / `VITE_REWARDS_API` | Achievements / rewards |
-| `VITE_DISCUSSIONS_DEMO` / `VITE_DISCUSSIONS_API` | Grove + quest discussions |
+| `VITE_DISCUSSIONS_DEMO` / `VITE_DISCUSSIONS_API` | Grove + quest discussions (**deferred** for this RC) |
 
-Live RC example: quests/proofs/moderation/rewards API on; discussions API on after migration `0021`; Grove demo off when using the API.
+Live RC example: quests/proofs/moderation/rewards API on; **both** discussion flags **false** so Grove/quest discussions show unavailable. Migration `0021` + routes remain in the tree but are **not independently accepted** until next week — keep flags off for release.
 
 ## Testing
 

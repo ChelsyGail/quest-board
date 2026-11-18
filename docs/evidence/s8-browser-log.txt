@@ -1,0 +1,41 @@
+logged in s8-7b7b70@aup.edu @ http://127.0.0.1:5173/
+shot s8-01-student-desktop.png
+shot s8-02-student-rewards.png
+rewards text: QuestBoard |  | Campus adventure noticeboard |  | Quests | My quests | Quest Grove | Rewards | Proof review | Session ends at 04:18 PM | SS | S8 Student | Account | Rewards | Refresh |  | 30 earned points · 15 sp
+shot s8-03-my-quests.png
+shot s8-03b-my-quests-reload.png
+my quests after reload http://127.0.0.1:5173/
+shot s8-04-student-narrow.png
+focus after Tab BUTTON:My quests
+shot s8-05-reduced-motion.png
+shot s8-05b-student-quest-detail.png
+logged in m8-7b7b70@aup.edu @ http://127.0.0.1:5173/
+shot s8-06-moderator-queue.png
+seeded pending submission item=214 part=69
+shot s8-06b-moderator-queue-seeded.png
+shot s8-06c-moderator-after-reject.png
+reject attempted
+student participations=5 rejected=none statuses=published,published,published,published,published
+logged in s8-7b7b70@aup.edu @ http://127.0.0.1:5173/
+shot s8-06d-student-after-reject.png
+logged in m8-7b7b70@aup.edu @ http://127.0.0.1:5173/
+shot s8-06c2-moderator-after-approve.png
+approve UI attempted
+logged in s8-7b7b70@aup.edu @ http://127.0.0.1:5173/
+fresh reward id=5 status=201
+shot s8-06e-student-rewards-after-approve.png
+claim confirm dialog: Claim “S8 Browser Sticker 1795011549082” for 5 points?
+shot s8-06f-student-after-claim.png
+claim UI attempted; balance=42 earned points · 22 spendable
+claim UI
+logged in o8-7b7b70@aup.edu @ http://127.0.0.1:5173/
+shot s8-07-organizer-rewards.png
+org rewards: QuestBoard |  | Campus adventure noticeboard |  | Quests | My quests | My items | Quest Grove | Rewards | Create quest | Create event | Session ends at 04:19 PM | SO | S8 Organizer | Account | Rewards | Refresh |  | 0 earned points · 0 
+shot s8-07b-organizer-create-reward.png
+shot s8-08-organizer-create-quest.png
+proof requirement controls visible text=0 media=0
+shot s8-08b-proof-requirement-controls.png
+shot s8-08c-organizer-items.png
+grove deferred UI: QuestBoard |  | Campus adventure noticeboard |  | Quests | My quests | My items | Quest Grove | Rewards | Create quest | Create event | Session ends at 04:19 PM | SO | S8 Organizer | Account | Quest Grove |  | Talk with other students about campus life, quests and ideas. Pi
+shot s8-09-grove-deferred.png
+DONE

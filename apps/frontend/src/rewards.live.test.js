@@ -135,6 +135,20 @@ describe("live rewards adapter", () => {
     );
   });
 
+  it("surfaces uncertain claims as network errors so the page can refresh balances", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("network down");
+      })
+    );
+    const client = getRewardsClient({ token: "tok", userId: "7" });
+    await expect(client.claimReward("9")).rejects.toMatchObject({
+      status: 0,
+      resultUnknown: true,
+    });
+  });
+
   it("lists organizer rewards by paging /rewards without calling /rewards/me", async () => {
     vi.stubGlobal(
       "fetch",

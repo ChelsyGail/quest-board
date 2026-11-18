@@ -13,7 +13,10 @@ PASS ACHIEVEMENTS total_points=25 available_points=25 completed_quests=1
 PASS REWARD create id=2
 PASS CLAIM 201 points_spent=10 available_points=15
 PASS GET_MEDIA 200 633 bytes JPEG
-PASS LEAVE DELETE /items/{id}/join -> 204
+NOTE (corrected S8): The LEAVE 204 below was NOT on the approved proof quest.
+It was a separate join-only “Leave Quest” with no submission. Leaving after
+pending/rejected/approved proof returns 409 proof_already_submitted (see api-e2e-s8.txt).
+PASS LEAVE on no-proof quest DELETE /items/{leaveQuestId}/join -> 204
 
 Browser evidence (Playwright, live FE flags):
 - 01-student-home.png — E2E Student, joined E2E quests on board

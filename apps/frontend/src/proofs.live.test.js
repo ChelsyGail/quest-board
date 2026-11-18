@@ -190,4 +190,139 @@ describe("live proof adapter", () => {
       validateProofDraft(reqs, { text: "", photos: [], video: null }).photos
     ).toMatch(/photo|video/i);
   });
+
+  it("keeps successful uploads when a later upload fails so retry does not re-send them", async () => {
+    let uploads = 0;
+    function FakeXHR() {
+      this.upload = { onprogress: null };
+      this.status = 0;
+      this.responseText = "";
+    }
+    FakeXHR.prototype.open = vi.fn();
+    FakeXHR.prototype.setRequestHeader = vi.fn();
+    FakeXHR.prototype.send = function send() {
+      uploads += 1;
+      queueMicrotask(() => {
+        if (uploads === 1) {
+          this.status = 201;
+          this.responseText = JSON.stringify({
+            data: {
+              type: "media",
+              id: "10",
+              attributes: {
+                content_type: "image/png",
+                kind: "photo",
+                size_bytes: 4,
+                uploaded_at: "2026-11-18T12:00:00Z",
+              },
+            },
+          });
+          this.onload();
+        } else {
+          this.status = 0;
+          this.onerror();
+        }
+      });
+    };
+    vi.stubGlobal("XMLHttpRequest", FakeXHR);
+    const submitFetch = vi.fn();
+    vi.stubGlobal("fetch", submitFetch);
+
+    const client = getProofClient({ token: "tok", userId: "7", userName: "Ada" });
+    const first = new File([new Uint8Array(4)], "a.png", { type: "image/png" });
+    const second = new File([new Uint8Array(4)], "b.png", { type: "image/png" });
+    await expect(
+      client.submitProof("99", { text: "x", photos: [first, second], video: null })
+    ).rejects.toMatchObject({ status: 0 });
+    expect(submitFetch).not.toHaveBeenCalled();
+    expect(uploads).toBe(2);
+
+    // Retry: first file should reuse cached media id 10; only second uploads again.
+    uploads = 0;
+    FakeXHR.prototype.send = function send() {
+      uploads += 1;
+      queueMicrotask(() => {
+        this.status = 201;
+        this.responseText = JSON.stringify({
+          data: {
+            type: "media",
+            id: "11",
+            attributes: {
+              content_type: "image/png",
+              kind: "photo",
+              size_bytes: 4,
+              uploaded_at: "2026-11-18T12:01:00Z",
+            },
+          },
+        });
+        this.onload();
+      });
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url, options) => {
+        const body = JSON.parse(options.body);
+        expect(body.media_ids).toEqual([10, 11]);
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            data: {
+              type: "submissions",
+              id: "8",
+              attributes: {
+                participation_id: "99",
+                item_id: "5",
+                user_id: "7",
+                attempt_number: 1,
+                text: "x",
+                media: [
+                  { id: "10", content_type: "image/png", kind: "photo", size_bytes: 4 },
+                  { id: "11", content_type: "image/png", kind: "photo", size_bytes: 4 },
+                ],
+                status: "pending",
+                submitted_at: "2026-11-18T12:02:00Z",
+              },
+            },
+          }),
+        };
+      })
+    );
+    const submitted = await client.submitProof("99", {
+      text: "x",
+      photos: [first, second],
+      video: null,
+    });
+    expect(uploads).toBe(1);
+    expect(submitted.photos.map((photo) => photo.id)).toEqual(["10", "11"]);
+  });
+
+  it("marks uncertain submit responses for history reconcile without clearing uploads", async () => {
+    vi.stubGlobal(
+      "XMLHttpRequest",
+      mockXhrSuccess({
+        data: {
+          type: "media",
+          id: "42",
+          attributes: {
+            content_type: "image/png",
+            kind: "photo",
+            size_bytes: 12,
+            uploaded_at: "2026-11-12T12:00:00Z",
+          },
+        },
+      })
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("network down");
+      })
+    );
+    const client = getProofClient({ token: "tok", userId: "7", userName: "Ada" });
+    const photo = new File([new Uint8Array(12)], "bag.png", { type: "image/png" });
+    await expect(
+      client.submitProof("99", { text: "Done.", photos: [photo], video: null })
+    ).rejects.toMatchObject({ status: 0, reconcileHint: true });
+  });
 });

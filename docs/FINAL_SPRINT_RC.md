@@ -2,14 +2,15 @@
 
 **Head:** `taha-final-sprint-integration` (this PR)  
 **Base:** `ChelsyGail/quest-board` `main`  
-**Final tip SHA:** verify with `git rev-parse origin/taha-final-sprint-integration` after fetch (pushed tip at closeout: `15a842ca76173c52a0e6ff0df8d74b8a42fc0700`; docs-only follow-ups may advance HEAD by one commit).  
-**Dependency:** Incorporates Chelsy `last-sprint` / PR **#24** backend (proof → moderation → recognition → rewards, migrations `0010`–`0020`) onto our FE tip `faf4db1` (`taha-proof-backend-integration`). Do **not** also merge PR #24 into `main` after this lands, or backend will double-apply. Prefer closing #24 as superseded once this RC is accepted.
+**Candidate SHA:** verify with `git rev-parse HEAD` on this branch after the S8 commit (local tip supersedes older pushed notes).  
+**Feature commit (discussions/docs/proof controls):** `a258346aae550a3ad67b9427b4e59ae50eb6cb69`  
+**Dependency:** Incorporates Chelsy `last-sprint` / PR **#24** backend (proof → moderation → recognition → rewards, migrations `0010`–`0020`) plus migration `0021` (discussions schema, **deferred acceptance**). Do **not** also merge PR #24 into `main` after this lands, or backend will double-apply. Prefer closing #24 as superseded once this RC is accepted.
 
 ## Why not base on `last-sprint` alone
 
 `last-sprint` is **25 ahead / 43 behind** `main` and ships accidental `.DS_Store` files. This RC cherry-picks the product files from `origin/last-sprint` @ `4b9de48` while keeping:
 
-- Our FE contracts and UI (proof, moderation, rewards, loading/Grove prototype flags)
+- Our FE contracts and UI (proof, moderation, rewards, loading flags)
 - Our `participation_service` leave-item / group cleanup + `current_submission_id` safeguards
 - Our catalogue **instant** `window_start` / `window_end` filters (restored; last-sprint had dropped them) **plus** Chelsy’s `requires_*` proof flags on item attributes
 
@@ -23,46 +24,61 @@
 | `fork/main` | **69 behind / 0 ahead** | Stale fork default |
 | Team PRs #1–#23 | merged | Some into stacked feature branches |
 
-`.DS_Store` still present on `origin/last-sprint` tree (`.DS_Store`, `apps/.DS_Store`, `apps/backend/.DS_Store`). **Not** carried into this RC.
+`.DS_Store` still present on `origin/last-sprint` tree. **Not** carried into this RC.
 
 ## Feature / ticket mapping (RC surface)
 
-| Area | Tickets / work | Where |
-|---|---|---|
-| Proof upload + submit | QB-98/99 / Chelsy proof API | `proof_router`, `proof_service`, FE `proofs.js` |
-| Proof requirements on quests | last-sprint `0010` | catalogue models/service/router + FE `requirementsFromItem` |
-| Moderation queue / approve / reject | BE-5x / PR #24 | `review_router`, FE `ModeratorQueue.jsx` |
-| Points / badges / achievements | recognition | `recognition_*`, `GET /users/me/achievements` |
-| Rewards + claims | rewards | `reward_*`, FE `rewards.js` (`/claims`, no `/rewards/me`) |
-| Auth media GET | PR #24 | `GET /media/{id}` + FE `hydrateMediaUrls` |
-| Leave item / groups | prior integration | `participation_service` unchanged from `faf4db1` |
-| Catalogue student TZ windows | our tip | `catalogue_router` window_start/end |
-| Quest Grove / discussions | prototype only | `VITE_DISCUSSIONS_DEMO` — **no server persistence** |
+| Area | Tickets / work | Where | Acceptance |
+|---|---|---|---|
+| Proof upload + submit | QB-98/99 / Chelsy proof API | `proof_router`, `proof_service`, FE `proofs.js` | **In scope** |
+| Proof requirements on quests | last-sprint `0010` + FE checkboxes | catalogue + `QuestForm` / `ItemForm` | **In scope** |
+| Moderation queue / approve / reject | BE-5x / PR #24 | `review_router`, FE `ModeratorQueue.jsx` | **In scope** |
+| Points / badges / achievements | recognition | `recognition_*`, `GET /users/me/achievements` | **In scope** |
+| Rewards + claims | rewards | `reward_*`, FE `rewards.js` | **In scope** |
+| Auth media GET | PR #24 | `GET /media/{id}` + FE `hydrateMediaUrls` | **In scope** |
+| Leave item / groups | prior integration | `participation_service` | **In scope** (leave blocked after any proof) |
+| Catalogue student TZ windows | our tip | `catalogue_router` window_start/end | **In scope** |
+| Quest Grove / discussions | migration `0021` + `/discussions/*` + FE client | gated by `VITE_DISCUSSIONS_*=false` | **Deferred** — code retained, **not** independently accepted |
 
-## Verification (against local RC working tree; re-run after push for final SHA)
+## Grove / discussions — deferred gating
+
+Keep **both** false for this release:
+
+```
+VITE_DISCUSSIONS_DEMO=false
+VITE_DISCUSSIONS_API=false
+```
+
+With those flags, Quest Grove / quest discussion UI shows **Coming soon / aren't available yet** (nav may still exist). Backend routes and migration `0021` stay applied but are out of release acceptance until next week. Do **not** delete or revert the implementation. Additional gating required for a hard cut: leave flags false in every deployed env; optional future: hide Grove nav when mode is off (not required — unavailable page is sufficient).
+
+## Verification (S8 — local candidate)
 
 | Check | Result |
 |---|---|
-| Backend unit (`pytest tests/` without DB) | **20 passed, 11 skipped** |
-| Backend integration (`QUESTBOARD_INTEGRATION=1`) | **11 passed** |
-| FE focused proof/rewards (unit+live) | **19 passed** |
-| FE full Vitest | **351–352 passed**; occasional flaky timeout in `CreateEvent.test.jsx` under full parallel load (passes alone) |
-| `npm run build` | **passed** |
-| Migrations `0010`–`0020` on `questboard_review` | **applied** (schema_migrations through `0020_unique_reward_claim.sql`) |
-| Live API E2E | register → quest+requirements → publish → join → raw `POST /uploads` → submit → queue → approve → achievements (25 pts) → reward claim → `GET /media` → leave `204` — see `docs/evidence/api-e2e.txt` |
-| Browser (Playwright against live flags) | Student quests board + Rewards (25 earned / 15 spendable, First Quest badge, claimed mug) — `docs/evidence/01-*.png`, `02-*.png`, `03-*.png` |
+| Frontend Vitest (`--maxWorkers=2`) | **356 passed** |
+| Backend pytest (unit + integration) | see S8 commit notes / handoff |
+| Migrations through `0021` on `questboard_review` | **applied** (schema retained) |
+| Leave after proof | **409** `proof_already_submitted` for pending/rejected/approved; join-only leave **204** (`docs/evidence/api-e2e-s8.txt`) |
+| Self-review | student+moderator approving own submission → **403** `self_review` |
+| Private media / duplicates / concurrent claims | other user **403**; duplicate submit **409** `attempt_pending`; approve replay **200**; parallel claims **201+409**, one row |
+| Partial upload / uncertain submit+claim recovery | unit coverage in `proofs.live.test.js` / `rewards.live.test.js` |
+| Browser (non-Grove) | `docs/evidence/s8-*.png` + `s8-browser-log.txt` — student/mod/org flows, claim, narrow, keyboard focus, reduced motion |
+| Grove browser acceptance | **Deferred** — unavailable page only (`s8-09-grove-deferred.png`) |
 
-Live FE flags used for E2E (local `.env`, not committed):  
-`VITE_QUESTS_DEMO=false`, `VITE_PROOFS_DEMO=false`, `VITE_PROOFS_API=true`, `VITE_MODERATION_API=true`, `VITE_REWARDS_DEMO=false`, `VITE_REWARDS_API=true`, `VITE_DISCUSSIONS_DEMO=true` (Grove prototype).
+Older S6 leave-204 note on the approved proof quest was **misleading**; corrected in `docs/evidence/api-e2e.txt`.
+
+Live FE flags for in-scope RC:  
+`VITE_QUESTS_DEMO=false`, `VITE_PROOFS_DEMO=false`, `VITE_PROOFS_API=true`, `VITE_MODERATION_API=true`, `VITE_REWARDS_DEMO=false`, `VITE_REWARDS_API=true`, `VITE_DISCUSSIONS_DEMO=false`, `VITE_DISCUSSIONS_API=false`.
 
 ## Outstanding limitations
 
-1. **Quest Grove / discussions** remain an in-browser demo — no discussion API, no durable spoiler ACL.
-2. **PR #24** still open with DS_Store + no CI; coordinate close/supersede with Chelsy before dual-merge.
-3. **Role elevation** for organizer/moderator in local E2E used DB role updates; production path is role-requests.
-4. Full Vitest can flake one CreateEvent timing test under heavy parallel isolate; not RC-product regressions (focused suites green).
-5. Antigravity / independent review must re-verify against the **final pushed SHA** — do not treat “everything reviewed” as true until findings are closed on that SHA.
-6. Fork `main` remains 69 behind; use this branch tip, not fork main.
+1. **Quest Grove / discussions** — implemented but **deferred** for acceptance; keep flags false.
+2. **Twists** — not implemented (`twist=None`); out of scope.
+3. **PR #24** still open with DS_Store + no CI; coordinate close/supersede with Chelsy before dual-merge.
+4. **Role elevation** for organizer/moderator in local E2E used DB role updates; production path is role-requests.
+5. **Media durability** — documented `PROOF_MEDIA_DIR` + `make cleanup-uploads`; Compose `sleep infinity` is **not** tested durable storage. Deployments need a persistent volume (or object store) + scheduled cleanup. Cloud storage **not** introduced without demonstrated need.
+6. Antigravity / independent review must re-verify against the **exact local candidate SHA** — this document does **not** claim independent sign-off.
+7. Fork remote may lag; use this branch tip, not fork `main`.
 
 ## Branch disposition (do **not** auto-delete)
 
@@ -78,8 +94,9 @@ Live FE flags used for E2E (local `.env`, not committed):
 | `SCRUM-15` | **safe to archive** | Obsolete React Native `apps/frontend` tree |
 | Other merged `QB-*` / `SCRUM-*` tips | **safe to archive** after team confirms | Already merged via PRs #1–23 into stacked history |
 
-## Grove remaining scope (explicit)
+## Deferred Grove remaining scope (next week)
 
-- Persist threads/replies server-side with authz.
-- Spoiler / proof-gated visibility enforced by API, not sessionStorage.
-- Replace `VITE_DISCUSSIONS_DEMO` once API exists; until then Grove stays labeled prototype.
+- Independent acceptance of persistent threads/replies with authz.
+- Spoiler / proof-gated visibility browser matrix.
+- Discussion reports/hide moderation (proposal MVP without reports).
+- Decide whether to hide Grove nav when flags are off.
