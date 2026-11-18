@@ -91,6 +91,24 @@ class EligibilityRuleAttributes(BaseModel):
     quest_id: str | None = None
 
 
+class RuleProgressAttributes(BaseModel):
+    current: int
+    required: int
+
+
+class RewardViewerStatus(BaseModel):
+    """Where the signed-in student stands with this reward (BE-58)."""
+
+    # True when the student can claim it right now: rule met, enough points,
+    # and not claimed yet.
+    eligible: bool
+    claimed: bool
+    # What is still needed, in words, e.g. "2 more approved quests". Empty
+    # when eligible or already claimed.
+    missing: list[str]
+    progress: RuleProgressAttributes
+
+
 class RewardAttributes(BaseModel):
     owner_id: str
     name: str
@@ -99,6 +117,8 @@ class RewardAttributes(BaseModel):
     point_cost: int
     created_at: datetime
     updated_at: datetime
+    # Present on the student-facing list and detail (BE-58).
+    viewer: RewardViewerStatus | None = None
 
 
 class RewardResourceData(BaseModel):
