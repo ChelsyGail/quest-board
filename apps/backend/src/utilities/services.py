@@ -8,6 +8,7 @@ from services.participation_service import ParticipationService
 from services.proof_service import ProofService
 from services.recognition_service import RecognitionService
 from services.review_service import ReviewService
+from services.reward_service import RewardService
 from services.role_request_service import RoleRequestService
 from services.user_service import UserService
 from utilities.object_store import LocalObjectStore
@@ -28,6 +29,7 @@ class Services:
     review_service: ReviewService
     recognition_service: RecognitionService
     moderation_audit_service: ModerationAuditService
+    reward_service: RewardService
 
 
 def setup_services() -> Services:
@@ -43,6 +45,7 @@ def setup_services() -> Services:
     review_service = ReviewService(load_database_settings())
     recognition_service = RecognitionService(load_database_settings())
     moderation_audit_service = ModerationAuditService(load_database_settings())
+    reward_service = RewardService(load_database_settings())
 
     return Services(
         health_service=health_service,
@@ -55,4 +58,5 @@ def setup_services() -> Services:
         review_service=review_service,
         recognition_service=recognition_service,
         moderation_audit_service=moderation_audit_service,
+        reward_service=reward_service,
     )

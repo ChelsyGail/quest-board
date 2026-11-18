@@ -8,11 +8,16 @@ from pydantic import BaseModel
 
 
 class RuleType(StrEnum):
-    """What a badge's criteria (BE-56) counts."""
+    """What a badge's criteria (BE-56) or a reward's eligibility (BE-62)
+    checks. Badges use only the three count rules."""
 
+    # Rewards only: anyone may claim.
+    NONE = "none"
     APPROVED_QUESTS = "approved_quests"
     TOTAL_POINTS = "total_points"
     CATEGORY_QUESTS = "category_quests"
+    # Rewards only: one named quest must have been approved.
+    QUEST_COMPLETED = "quest_completed"
 
 
 class BadgeSummary(BaseModel):

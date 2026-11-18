@@ -7,6 +7,7 @@ from api.participation_router import setup_participation_router
 from api.proof_router import setup_proof_router
 from api.recognition_router import setup_recognition_router
 from api.review_router import setup_review_router
+from api.reward_router import setup_reward_router
 from api.role_request_router import setup_role_request_router
 from api.user_router import setup_user_router
 from fastapi import FastAPI
@@ -112,5 +113,6 @@ def setup_app(services: Services) -> FastAPI:
     setup_proof_router(app, services)
     setup_review_router(app, services)
     setup_recognition_router(app, services)
+    setup_reward_router(app, services)
 
     return app
