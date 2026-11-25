@@ -14,7 +14,8 @@ bash scripts/check-demo.sh
 
 # If the printed Public API URL is new or changed, rebuild + re-publish Sites:
 bash scripts/build-sites-frontend.sh
-# then upload apps/frontend/dist/ to ChatGPT Sites and refresh the QR code.
+# then upload apps/frontend/dist/ to ChatGPT Sites.
+# QR stays the same if it already targets the unchanged Sites URL (never put the tunnel on the QR).
 
 # After class:
 bash scripts/stop-demo.sh
