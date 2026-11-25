@@ -27,6 +27,12 @@ class AuthSettings:
     secret_key: str
     algorithm: str
     access_token_expires_minutes: int
+    # Opt-in classroom demo: admin/mod login aliases + dedicated short-password accounts.
+    classroom_demo_enabled: bool = False
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def load_database_settings() -> DatabaseSettings:
@@ -44,6 +50,7 @@ def load_auth_settings() -> AuthSettings:
         secret_key=os.environ["JWT_SECRET_KEY"],
         algorithm=os.environ.get("JWT_ALGORITHM", "HS256"),
         access_token_expires_minutes=int(os.environ.get("JWT_EXPIRES_MINUTES", "60")),
+        classroom_demo_enabled=_env_flag("QUESTBOARD_CLASSROOM_DEMO"),
     )
 
 

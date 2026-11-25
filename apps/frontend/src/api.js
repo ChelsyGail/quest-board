@@ -25,6 +25,27 @@ export const EMAIL_PLACEHOLDER = "you@example.com";
 export const NAME_MAX_LENGTH = 120;
 export const PASSWORD_MIN_LENGTH = 12;
 export const PASSWORD_MAX_LENGTH = 128;
+
+// Opt-in classroom demo (Sites / laptop presentation). When true, Login may
+// accept the aliases "admin" / "mod". Signup and password-change keep the
+// 12-character minimum. Backend must also set QUESTBOARD_CLASSROOM_DEMO.
+export const CLASSROOM_DEMO_ALIASES = new Set(["admin", "mod"]);
+
+export function classroomDemoEnabled() {
+  return String(import.meta.env.VITE_CLASSROOM_DEMO || "").toLowerCase() === "true";
+}
+
+/** @deprecated use classroomDemoEnabled() — kept for older imports */
+export const CLASSROOM_DEMO_ENABLED = classroomDemoEnabled();
+
+export function isValidLoginIdentifier(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return false;
+  if (classroomDemoEnabled() && CLASSROOM_DEMO_ALIASES.has(trimmed.toLowerCase())) {
+    return true;
+  }
+  return EMAIL_PATTERN.test(trimmed) && trimmed.length <= EMAIL_MAX_LENGTH;
+}
 export const REASON_MAX_LENGTH = 500;
 
 export const ITEM_TITLE_MAX_LENGTH = 200;

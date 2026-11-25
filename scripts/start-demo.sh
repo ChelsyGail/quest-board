@@ -90,6 +90,28 @@ else
     exit 1
   fi
 
+  if [[ "${QUESTBOARD_CLASSROOM_DEMO}" == "1" || "${QUESTBOARD_CLASSROOM_DEMO}" == "true" ]]; then
+    if [[ -n "${CLASSROOM_DEMO_ADMIN_PASSWORD:-}" && -n "${CLASSROOM_DEMO_MOD_PASSWORD:-}" ]]; then
+      echo "Ensuring classroom demo accounts on ${MYSQL_DATABASE}…"
+      (
+        cd "$ROOT/apps/backend/src"
+        MYSQL_HOST="$MYSQL_HOST" MYSQL_PORT="$MYSQL_PORT" \
+          MYSQL_DATABASE="$MYSQL_DATABASE" MYSQL_USER="$MYSQL_USER" \
+          MYSQL_PASSWORD="$MYSQL_PASSWORD" \
+          CLASSROOM_DEMO_ADMIN_PASSWORD="$CLASSROOM_DEMO_ADMIN_PASSWORD" \
+          CLASSROOM_DEMO_MOD_PASSWORD="$CLASSROOM_DEMO_MOD_PASSWORD" \
+          "$POETRY_PY" -m jobs.ensure_classroom_demo_accounts \
+            --i-understand-this-targets-presentation-only
+      ) || {
+        echo "ERROR: failed to ensure classroom demo accounts." >&2
+        exit 1
+      }
+    else
+      echo "WARNING: QUESTBOARD_CLASSROOM_DEMO is on but CLASSROOM_DEMO_*_PASSWORD is unset."
+      echo "         Set them in scripts/demo.env (see ACCOUNTS.local.md). Aliases will 401 until then."
+    fi
+  fi
+
   echo "Starting FastAPI on ${DEMO_API_HOST}:${DEMO_API_PORT}…"
   : >"$API_LOG"
   # Bind loopback only — phones reach the API solely through the HTTPS tunnel.
@@ -104,6 +126,7 @@ else
         MYSQL_PASSWORD="$MYSQL_PASSWORD" \
         JWT_SECRET_KEY="$JWT_SECRET_KEY" \
         PROOF_MEDIA_DIR="$PROOF_MEDIA_DIR" \
+        QUESTBOARD_CLASSROOM_DEMO="${QUESTBOARD_CLASSROOM_DEMO:-0}" \
         "$POETRY_PY" -m uvicorn main:app \
           --host "$DEMO_API_HOST" \
           --port "$DEMO_API_PORT"

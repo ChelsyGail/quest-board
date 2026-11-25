@@ -47,6 +47,9 @@ demo_load_env() {
   export DEMO_TUNNEL_PROVIDER="${DEMO_TUNNEL_PROVIDER:-cloudflared}"
   export VITE_DISCUSSIONS_API="${VITE_DISCUSSIONS_API:-false}"
   export VITE_DISCUSSIONS_DEMO="${VITE_DISCUSSIONS_DEMO:-false}"
+  # Classroom demo aliases (admin/mod). Backend + Sites FE must agree.
+  export QUESTBOARD_CLASSROOM_DEMO="${QUESTBOARD_CLASSROOM_DEMO:-1}"
+  export VITE_CLASSROOM_DEMO="${VITE_CLASSROOM_DEMO:-true}"
 
   if [[ -z "${PROOF_MEDIA_DIR:-}" ]]; then
     export PROOF_MEDIA_DIR="$ROOT/apps/backend/var/proof-media-presentation"

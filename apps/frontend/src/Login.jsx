@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { EMAIL_PATTERN, EMAIL_PLACEHOLDER, login } from "./api.js";
+import {
+  classroomDemoEnabled,
+  EMAIL_PLACEHOLDER,
+  isValidLoginIdentifier,
+  login,
+} from "./api.js";
 
 function Login({ initialEmail, onAuthenticated, onShowSignup }) {
   const [email, setEmail] = useState(initialEmail || "");
@@ -15,16 +20,22 @@ function Login({ initialEmail, onAuthenticated, onShowSignup }) {
 
     let newEmailError = "";
     let newPasswordError = "";
+    const identifier = email.trim();
 
-    if (email.trim() === "") {
+    if (identifier === "") {
       newEmailError = "Please enter your email.";
-    } else if (!EMAIL_PATTERN.test(email.trim())) {
-      newEmailError = "Please enter a valid email address.";
+    } else if (!isValidLoginIdentifier(identifier)) {
+      newEmailError = classroomDemoEnabled()
+        ? "Please enter a valid email address (or a classroom demo login)."
+        : "Please enter a valid email address.";
     }
 
     if (password === "") {
       newPasswordError = "Please enter your password.";
     }
+    // Do not enforce PASSWORD_MIN_LENGTH on login — that rule is for signup /
+    // password change. Classroom demo accounts may use short passwords when
+    // VITE_CLASSROOM_DEMO is on; the backend still verifies the stored hash.
 
     setEmailError(newEmailError);
     setPasswordError(newPasswordError);
@@ -33,7 +44,7 @@ function Login({ initialEmail, onAuthenticated, onShowSignup }) {
 
     setIsSubmitting(true);
     try {
-      const session = await login(email.trim(), password);
+      const session = await login(identifier, password);
       onAuthenticated(session);
     } catch (error) {
       setFormError(
@@ -49,10 +60,14 @@ function Login({ initialEmail, onAuthenticated, onShowSignup }) {
         <div className="field">
           <label htmlFor="email">Email</label>
           <input
-            type="email"
+            type={classroomDemoEnabled() ? "text" : "email"}
             id="email"
-            placeholder={EMAIL_PLACEHOLDER}
-            autoComplete="email"
+            placeholder={
+              classroomDemoEnabled()
+                ? `${EMAIL_PLACEHOLDER} or classroom login`
+                : EMAIL_PLACEHOLDER
+            }
+            autoComplete="username"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             className={emailError ? "invalid" : ""}

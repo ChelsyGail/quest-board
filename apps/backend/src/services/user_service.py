@@ -157,6 +157,70 @@ class UserService:
     def verify_password(self, password: str, password_hash: str) -> bool:
         return self.password_hash.verify(password, password_hash)
 
+    def ensure_user_with_roles(
+        self,
+        *,
+        email: str,
+        name: str,
+        password: str,
+        roles: str,
+    ) -> UserRecord:
+        """Create or update a user with an explicit role CSV and password hash.
+
+        Intended for guarded local tooling (e.g. classroom presentation seed).
+        Does not go through UserCreate password length rules — callers must
+        only use this for explicitly allow-listed demo accounts.
+        """
+        password_hash = self.password_hash.hash(password)
+        with self.engine.begin() as connection:
+            existing = connection.execute(
+                text(
+                    """
+                    SELECT user_id FROM users
+                    WHERE email = :email AND deleted_at IS NULL
+                    """
+                ),
+                {"email": email},
+            ).one_or_none()
+            if existing is None:
+                result = connection.execute(
+                    text(
+                        """
+                        INSERT INTO users (email, name, password_hash, roles)
+                        VALUES (:email, :name, :password_hash, :roles)
+                        """
+                    ),
+                    {
+                        "email": email,
+                        "name": name,
+                        "password_hash": password_hash,
+                        "roles": roles,
+                    },
+                )
+                user_id = result.lastrowid
+            else:
+                user_id = existing.user_id
+                connection.execute(
+                    text(
+                        """
+                        UPDATE users
+                        SET name = :name,
+                            password_hash = :password_hash,
+                            roles = :roles,
+                            updated_at = CURRENT_TIMESTAMP(6)
+                        WHERE user_id = :user_id AND deleted_at IS NULL
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "name": name,
+                        "password_hash": password_hash,
+                        "roles": roles,
+                    },
+                )
+            row = self._load_user(connection, user_id)
+        return self._to_record(row)
+
     @staticmethod
     def _find_user(connection, user_id: int):
         return connection.execute(
