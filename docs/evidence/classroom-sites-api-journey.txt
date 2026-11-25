@@ -1,0 +1,13 @@
+PASS login public=https://nissan-maybe-offer-telephone.trycloudflare.com
+PASS join participation=9 http=200
+PASS grove_create http=201 id=2
+PASS grove_visible_to_mod=True
+PASS active_create http=201 id=3
+PASS upload http=201 media=9
+PASS submit http=201 submission=6
+PASS spoiler_switch active_http=403 submitted_http=201 submitted_id=4
+INFO review_paths=[]
+TRY POST /submissions/6/reviews -> 404 {'detail': 'Not Found'}
+TRY POST /reviews -> 404 {'detail': 'Not Found'}
+TRY POST /moderation/submissions/6/approve -> 201 {'data': {'type': 'reviews', 'id': '5', 'attributes': {'submission_id': '6', 'participation_id': '9', 'reviewer_id': '3', 'decision': 'approved', 'reviewed_at': '2026-11-25T15:54:1
+PASS achievements total=75 available=60 approved_flag=True

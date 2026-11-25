@@ -327,11 +327,35 @@ api_health_url() {
   printf 'http://%s:%s/health' "$DEMO_API_HOST" "$DEMO_API_PORT"
 }
 
+# Some ISP/router resolvers fail on *.trycloudflare.com while 1.1.1.1 works.
+# Prefer normal curl; on failure retry with dig @1.1.1.1 + curl --resolve.
+demo_curl_ok() {
+  local url="$1"
+  local host rest ip port
+  if curl -fsS --max-time 3 "$url" >/dev/null 2>&1; then
+    return 0
+  fi
+  [[ "$url" == https://* || "$url" == http://* ]] || return 1
+  rest="${url#http://}"
+  rest="${rest#https://}"
+  host="${rest%%/*}"
+  host="${host%%:*}"
+  [[ -n "$host" ]] || return 1
+  ip="$(dig +short "$host" @1.1.1.1 A 2>/dev/null | awk 'NR==1 && $1 ~ /^[0-9.]+$/ {print; exit}')"
+  [[ -n "$ip" ]] || return 1
+  if [[ "$url" == https://* ]]; then
+    port=443
+  else
+    port=80
+  fi
+  curl -fsS --max-time 5 --resolve "${host}:${port}:${ip}" "$url" >/dev/null 2>&1
+}
+
 wait_http_ok() {
   local url="$1" seconds="${2:-20}"
   local i
   for ((i = 0; i < seconds; i++)); do
-    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+    if demo_curl_ok "$url"; then
       return 0
     fi
     sleep 1
@@ -348,6 +372,8 @@ demo_valid_public_api_origin() {
 }
 
 # Start a long-lived process that survives the parent shell exiting.
+# macOS has no setsid(1); use Python start_new_session so classroom API/tunnel
+# are not killed when the launcher shell exits or the agent job ends.
 demo_daemonize() {
   local log_file="$1"
   shift
@@ -355,13 +381,29 @@ demo_daemonize() {
   if command -v setsid >/dev/null 2>&1; then
     setsid "$@" </dev/null >>"$log_file" 2>&1 &
     pid=$!
+  elif command -v python3 >/dev/null 2>&1; then
+    pid="$(
+      DEMO_DAEMON_LOG="$log_file" python3 - "$@" <<'PY'
+import os, sys, subprocess
+log = open(os.environ["DEMO_DAEMON_LOG"], "a", buffering=1)
+proc = subprocess.Popen(
+    sys.argv[1:],
+    stdin=subprocess.DEVNULL,
+    stdout=log,
+    stderr=log,
+    start_new_session=True,
+    close_fds=True,
+)
+print(proc.pid)
+PY
+    )" || return 1
   else
     nohup "$@" </dev/null >>"$log_file" 2>&1 &
     pid=$!
     disown "$pid" 2>/dev/null || true
   fi
   sleep 0.2
-  if ! kill -0 "$pid" 2>/dev/null; then
+  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
     return 1
   fi
   printf '%s' "$pid"

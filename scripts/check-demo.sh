@@ -79,17 +79,29 @@ else
   else
     bad "Public API origin invalid: $public_url"
   fi
-  if curl -fsS --max-time 15 "${public_url}/health" >/dev/null 2>&1; then
+  if demo_curl_ok "${public_url}/health"; then
     pass "Public HTTPS /health via tunnel"
   else
     bad "Public HTTPS /health failed for ${public_url}/health"
     echo "     Check $TUNNEL_LOG and laptop firewall/network."
+    echo "     Tip: ISP DNS may fail on *.trycloudflare.com; dig @1.1.1.1 should still resolve."
   fi
-  # Login probe without printing tokens
-  login_code="$(curl -sS -o /tmp/qb-demo-login.json -w '%{http_code}' --max-time 15 \
-    -H 'Content-Type: application/json' \
-    -d '{"email":"__demo_missing__@example.com","password":"x"}' \
-    "${public_url}/auth/login" || true)"
+  # Login probe without printing tokens (DNS workaround when needed).
+  login_code="000"
+  host="${public_url#https://}"; host="${host%%/*}"
+  ip="$(dig +short "$host" @1.1.1.1 A 2>/dev/null | awk 'NR==1 && $1 ~ /^[0-9.]+$/ {print; exit}')"
+  if [[ -n "$ip" ]]; then
+    login_code="$(curl -sS -o /tmp/qb-demo-login.json -w '%{http_code}' --max-time 15 \
+      --resolve "${host}:443:${ip}" \
+      -H 'Content-Type: application/json' \
+      -d '{"email":"__demo_missing__@example.com","password":"x"}' \
+      "${public_url}/auth/login" || true)"
+  else
+    login_code="$(curl -sS -o /tmp/qb-demo-login.json -w '%{http_code}' --max-time 15 \
+      -H 'Content-Type: application/json' \
+      -d '{"email":"__demo_missing__@example.com","password":"x"}' \
+      "${public_url}/auth/login" || true)"
+  fi
   if [[ "$login_code" == "401" || "$login_code" == "422" ]]; then
     pass "Public /auth/login reachable (HTTP $login_code as expected for bad credentials)"
   else

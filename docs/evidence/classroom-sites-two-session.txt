@@ -1,0 +1,38 @@
+Classroom two-session verification (2026-11-25 ~16:55 CET)
+
+Public API (current): https://nissan-maybe-offer-telephone.trycloudflare.com
+Published Sites: https://questboard-connected.aculite69.chatgpt.site
+Rebuilt dist (not yet re-uploaded to Sites): apps/frontend/dist/ with VITE_API_BASE_URL=new tunnel, VITE_DISCUSSIONS_API=true
+
+=== Published Sites URL (stale bundle) ===
+FAIL student login — UI error:
+  "Couldn't get a response from the server at https://might-shots-cho-irc.trycloudflare.com"
+Sites JS asset still index-xUry-YQS.js baking OLD tunnel. Must re-upload rebuilt dist.
+
+=== Public HTTPS API two-session (Maya student + Samira moderator) ===
+PASS login both via tunnel
+PASS join Campus Photo Walk (quest 3) participation=9
+PASS Grove create by Maya; visible to Samira (grove_visible_to_mod=True)
+PASS active discussion create before proof
+PASS PNG upload + submit submission=6
+PASS after proof: active list HTTP 403; submitted thread create 201
+PASS moderator approve POST /moderation/submissions/6/approve → 201
+PASS achievements after approve total=75 available=60
+
+=== Rebuilt dist UI at http://127.0.0.1:4173 (same build Sites needs) ===
+Session A Maya:
+PASS login
+PASS catalogue live (no demo banner); Photo Walk + Greenhouse Joined
+PASS Quest Grove lists "SitesClass Grove …" threads
+PASS Rewards shows 75 earned · 60 spendable (+ First Quest, claimable rewards)
+
+Session B Samira (separate tab/login):
+PASS login; Proof review nav present
+PASS queue shows Welcome Desk Shift (Maya)
+PASS Approve → "Marked approved. Points awarded: 10." Queue empty
+PASS Quest Grove shows Maya's "SitesClass Grove …" threads (cross-user)
+
+Limitations:
+- Published Sites not re-tested after upload (upload is manual).
+- Phone/mobile-data not tested.
+- Quest active→submitted spoiler UI panel not fully walked in browser this turn (API ACL + Grove UI yes).
