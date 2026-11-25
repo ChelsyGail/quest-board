@@ -231,3 +231,13 @@ __marimo__/
 docs/evidence/*.log
 docs/evidence/browser-*-log.txt
 docs/evidence/browser-e2e-run.txt
+
+# Local presentation demo credentials / notes (never commit passwords)
+docs/presentation/*.local.md
+docs/presentation/*.local.sh
+docs/presentation/ACCOUNTS.local.md
+docs/presentation/start-demo.local.sh
+docs/presentation/screenshots/
+
+# Local slide/graphics build outputs (not product source)
+/outputs/

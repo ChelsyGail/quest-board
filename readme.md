@@ -132,6 +132,11 @@ Participation/review payloads may expose a `twist` field. **Twists (BE-26/BE-29)
 
 ## Docs
 
-- `docs/FINAL_SPRINT_RC.md` — release-candidate notes
-- `docs/discussion-api-proposal.md` — discussion scopes (partially implemented)
+- `RELEASE_REPORT.md` — latest verification results, feature checklist, walkthrough
+- `docs/FINAL_SPRINT_RC.md` — release-candidate notes (PR #25 product tip)
+- `docs/HOSTING_CHATGPT_SITES.md` — later ChatGPT Sites handoff (Options A/B; **do not deploy from the doc**)
+- `docs/discussion-api-proposal.md` — discussion scopes (partially implemented; deferred for acceptance)
 - `docs/evidence/` — local verification artifacts (may be regenerated; avoid committing secrets)
+- `docs/presentation/README.md` — optional local presentation DB seed (credentials gitignored)
+
+Team `main` already includes the final-sprint RC via **PR #25**. Keep Grove/discussion flags false until independently accepted.
