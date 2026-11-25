@@ -3,7 +3,7 @@
 **Date:** 2026-11-25  
 **Branch:** `taha-final-sprint-integration`  
 **Product tip incorporated in team `main`:** `7744455cf5ae2281d43df665d28429024e360aab` (via merged PR **#25**)  
-**Verification HEAD (this report):** run `git rev-parse HEAD` after the release-docs commit on this branch  
+**Verification HEAD (this report):** tip of `taha-rc-hosting-handoff` (verify with `git rev-parse HEAD`)  
 **Team base:** `ChelsyGail/quest-board` `main` (includes merge commit `2700dbe` for PR #25)  
 **Prior independent review:** Antigravity accepted in-scope delivery on `7744455` (local summary under `.gemini/antigravity/brain/…/QUESTBOARD_REVIEW_SUMMARY.md`).  
 **PR:** https://github.com/ChelsyGail/quest-board/pull/25 — **merged** into team `main` (do not re-merge). Follow-up docs/fix PR (if opened from this branch) is listed after push.
