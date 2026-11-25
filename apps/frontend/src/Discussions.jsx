@@ -16,10 +16,11 @@ export function PrototypeNotice() {
 export function DiscussionsUnavailable({ what = "Discussions" }) {
   return (
     <div className="panel-state discussion-unavailable">
-      <p className="eyebrow">Coming soon</p>
+      <p className="eyebrow">Not enabled</p>
       <p>
-        {what} aren't available yet. They need a discussion service on the QuestBoard
-        backend, which hasn't been built.
+        {what} aren't available in this build. Turn on the live discussion API flag
+        (and keep the sample demo flag off) when the QuestBoard discussion service
+        is ready for this environment.
       </p>
     </div>
   );

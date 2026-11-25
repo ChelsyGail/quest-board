@@ -192,7 +192,7 @@ describe("Quest discussion prototype", () => {
   it("says it's unavailable in live mode and never loads sample data", () => {
     vi.stubEnv("VITE_DISCUSSIONS_DEMO", "false");
     renderDiscussion();
-    expect(screen.getByText(/Quest discussions aren't available yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Quest discussions aren't available in this build/)).toBeInTheDocument();
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(demoListThreads).not.toHaveBeenCalled();
   });
@@ -200,7 +200,7 @@ describe("Quest discussion prototype", () => {
   it("stays unavailable in a production build even with the flag on", () => {
     vi.stubEnv("DEV", false);
     renderDiscussion();
-    expect(screen.getByText(/aren't available yet/)).toBeInTheDocument();
+    expect(screen.getByText(/aren't available in this build/)).toBeInTheDocument();
     expect(demoListThreads).not.toHaveBeenCalled();
   });
 });

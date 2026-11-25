@@ -9,6 +9,7 @@ const EMPTY_DRAFT = { title: "", category: "", body: "" };
 // backend, in which case nothing is loaded.
 export function useDiscussionBoard(client, scope, categories, { onSessionExpired } = {}) {
   const [threads, setThreads] = useState([]);
+  const [listMeta, setListMeta] = useState({ totalItems: 0, totalPages: 0, truncated: false });
   const [listStatus, setListStatus] = useState(client ? "loading" : "unavailable");
   const [listError, setListError] = useState("");
   const [listAttempt, setListAttempt] = useState(0);
@@ -44,6 +45,7 @@ export function useDiscussionBoard(client, scope, categories, { onSessionExpired
     setSubmitError("");
     setDetail({ status: "idle", thread: null, replies: [] });
     setThreads([]);
+    setListMeta({ totalItems: 0, totalPages: 0, truncated: false });
   }, [scope]);
 
   useEffect(() => {
@@ -51,11 +53,22 @@ export function useDiscussionBoard(client, scope, categories, { onSessionExpired
     let ignore = false;
     setListStatus("loading");
     setListError("");
-    client
-      .listThreads(scope)
-      .then((list) => {
+    const request = client.isPrototype
+      ? client.listThreads(scope)
+      : client.listThreads(scope, {
+          query: filters.query,
+          category: filters.category,
+        });
+    request
+      .then((result) => {
         if (ignore) return;
+        // Live returns { threads, meta }; tolerate a bare array from older callers/tests.
+        const list = Array.isArray(result) ? result : result?.threads || [];
+        const meta = Array.isArray(result)
+          ? { totalItems: list.length, totalPages: 1, truncated: false }
+          : result?.meta || { totalItems: list.length, totalPages: 1, truncated: false };
         setThreads(list);
+        setListMeta(meta);
         setListStatus("loaded");
       })
       .catch((error) => {
@@ -66,8 +79,16 @@ export function useDiscussionBoard(client, scope, categories, { onSessionExpired
     return () => {
       ignore = true;
     };
-    // Client identity is cached by author; scope + attempt decide when to reload.
-  }, [scope, listAttempt, Boolean(client)]);
+    // `client` identity changes with account/token so stale responses are dropped.
+    // Live reloads when filters change so search/category hit the API; demo filters client-side.
+  }, [
+    scope,
+    listAttempt,
+    client,
+    client?.isPrototype,
+    client?.isPrototype ? "" : filters.query,
+    client?.isPrototype ? "" : filters.category,
+  ]);
 
   const openId = view.mode === "thread" ? view.id : null;
   useEffect(() => {
@@ -88,7 +109,7 @@ export function useDiscussionBoard(client, scope, categories, { onSessionExpired
     return () => {
       ignore = true;
     };
-  }, [openId, detailAttempt, Boolean(client)]);
+  }, [openId, detailAttempt, client]);
 
   function openThread(id) {
     setReplyError("");
@@ -167,6 +188,7 @@ export function useDiscussionBoard(client, scope, categories, { onSessionExpired
 
   return {
     threads,
+    listMeta,
     listStatus,
     listError,
     reloadList: () => setListAttempt((attempt) => attempt + 1),

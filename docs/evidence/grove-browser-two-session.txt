@@ -1,0 +1,16 @@
+Grove two-browser verification (2026-11-25)
+Stack: FE :5173 VITE_DISCUSSIONS_API=true DEMO=false; API :8000 questboard_review
+
+Session A (tab glass-browser-4a9025bb…): logged in as grove-rel-47e51298-a@aup.edu
+- Quest Grove list showed GroveRel 47e51298 (API-created) with 1 reply
+- Created live thread via UI: "BrowserGrove 47e51298" / general
+
+Session B (tab glass-browser-6731f4d4…): logged in as grove-rel-47e51298-b@aup.edu (separate login)
+- Quest Grove list showed "BrowserGrove 47e51298" authored by Grove a
+- Also saw GroveRel 47e51298
+
+Quest active/submitted ACL + reject: covered by API matrix docs/evidence/grove-verify-47e51298.txt (23/23)
+including direct list/detail/reply denial after proof.
+
+Limitations: simultaneous side-by-side tabs share no login (separate sessions via logout/login).
+Quest discussion panel UI spoiler switch not re-driven in browser this turn (API ACL enforced).

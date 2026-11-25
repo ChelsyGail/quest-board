@@ -131,8 +131,10 @@ def setup_discussion_router(app: FastAPI, services: Services):
             return validation_error(str(error))
         except ItemNotFoundError:
             return item_not_found()
-        except (NotAMemberError, ScopeAccessDeniedError):
+        except NotAMemberError:
             return not_a_member()
+        except ScopeAccessDeniedError:
+            return scope_access_denied()
         return _thread_list_response(result)
 
     @router.post(
@@ -161,8 +163,10 @@ def setup_discussion_router(app: FastAPI, services: Services):
             return validation_error(str(error))
         except ItemNotFoundError:
             return item_not_found()
-        except (NotAMemberError, ScopeAccessDeniedError):
+        except NotAMemberError:
             return not_a_member()
+        except ScopeAccessDeniedError:
+            return scope_access_denied()
         return ThreadResponse(data=to_thread_resource(record))
 
     @router.get(
@@ -190,8 +194,10 @@ def setup_discussion_router(app: FastAPI, services: Services):
             return thread_not_found()
         except ItemNotFoundError:
             return item_not_found()
-        except (NotAMemberError, ScopeAccessDeniedError):
+        except NotAMemberError:
             return not_a_member()
+        except ScopeAccessDeniedError:
+            return scope_access_denied()
         except DiscussionValidationError as error:
             return validation_error(str(error))
         return _thread_detail_response(detail)
@@ -216,8 +222,10 @@ def setup_discussion_router(app: FastAPI, services: Services):
             return thread_not_found()
         except ItemNotFoundError:
             return item_not_found()
-        except (NotAMemberError, ScopeAccessDeniedError):
+        except NotAMemberError:
             return not_a_member()
+        except ScopeAccessDeniedError:
+            return scope_access_denied()
         except DiscussionValidationError as error:
             return validation_error(str(error))
         return ReplyResponse(data=to_reply_resource(reply))
@@ -306,6 +314,17 @@ def not_a_member():
         "not_a_member",
         "Not a member",
         "You cannot read or post in this discussion space.",
+        None,
+    )
+
+
+def scope_access_denied():
+    return json_api_error_response(
+        DiscussionErrorResponse,
+        status.HTTP_403_FORBIDDEN,
+        "scope_access_denied",
+        "Wrong discussion space",
+        "Your participation does not allow this discussion space.",
         None,
     )
 

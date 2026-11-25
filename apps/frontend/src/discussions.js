@@ -148,14 +148,45 @@ function mapReply(resource) {
   };
 }
 
+const LIVE_LIST_PAGE_SIZE = 50;
+/** Hard cap so a runaway total cannot hammer the API; UI surfaces truncation. */
+const LIVE_LIST_MAX_PAGES = 40;
+
 function liveDiscussionClient(author) {
   const token = author.token;
   return {
     isPrototype: false,
-    async listThreads(scope) {
-      const path = scopeToThreadsPath(scope);
-      const { data } = await liveDocument(path, { token });
-      return (Array.isArray(data) ? data : []).map(mapThread);
+    /**
+     * Loads every page for the scope (up to LIVE_LIST_MAX_PAGES) so the Grove tree
+     * and list never silently omit threads beyond the first page.
+     * Optional `query` / `category` are applied server-side.
+     */
+    async listThreads(scope, { query = "", category = "" } = {}) {
+      const basePath = scopeToThreadsPath(scope);
+      const threads = [];
+      let pageNumber = 1;
+      let totalPages = 1;
+      let totalItems = 0;
+      do {
+        const params = new URLSearchParams();
+        params.set("page[number]", String(pageNumber));
+        params.set("page[size]", String(LIVE_LIST_PAGE_SIZE));
+        if (query.trim()) params.set("q", query.trim());
+        if (category) params.set("category", category);
+        const { data, meta } = await liveDocument(`${basePath}?${params}`, { token });
+        threads.push(...(Array.isArray(data) ? data : []).map(mapThread));
+        totalPages = Number(meta?.page?.total_pages) || 0;
+        totalItems = Number(meta?.page?.total_items) || threads.length;
+        pageNumber += 1;
+      } while (pageNumber <= totalPages && pageNumber <= LIVE_LIST_MAX_PAGES);
+      return {
+        threads,
+        meta: {
+          totalItems,
+          totalPages,
+          truncated: totalPages > LIVE_LIST_MAX_PAGES,
+        },
+      };
     },
     async getThread(threadId) {
       const { data, meta } = await liveDocument(
@@ -201,7 +232,10 @@ export function getDiscussionClient(author) {
     if (cached) return cached;
     const client = {
       isPrototype: true,
-      listThreads: (scope) => demoListThreads(scope),
+      listThreads: async (scope) => {
+        const threads = await demoListThreads(scope);
+        return { threads, meta: { totalItems: threads.length, totalPages: 1, truncated: false } };
+      },
       getThread: (threadId) => demoGetThread(threadId),
       createThread: (scope, fields) => demoCreateThread(scope, fields, author),
       createReply: (threadId, fields) => demoCreateReply(threadId, fields, author),
