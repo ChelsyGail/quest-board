@@ -8,7 +8,9 @@ from api.app_factory import setup_app
 from fastapi.testclient import TestClient
 from models.users import UserRole
 from services.discussion_service import DiscussionAuthor
+from services.discussion_service import DiscussionValidationError
 from services.discussion_service import NotAMemberError
+from services.discussion_service import ScopeAccessDeniedError
 from services.discussion_service import ThreadPage
 from services.discussion_service import ThreadRecord
 
@@ -93,3 +95,46 @@ def test_quest_active_list_maps_not_a_member(client, services):
     )
     assert response.status_code == 403
     assert response.json()["errors"][0]["code"] == "not_a_member"
+
+
+def test_quest_active_list_maps_scope_access_denied(client, services):
+    services.discussion_service.list_threads.side_effect = ScopeAccessDeniedError
+    response = client.get(
+        "/discussions/quests/5/spaces/active/threads", headers=AUTH
+    )
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "scope_access_denied"
+
+
+def test_create_grove_thread_rejects_validation_error(client, services):
+    services.discussion_service.create_thread.side_effect = DiscussionValidationError(
+        "Message cannot be empty."
+    )
+    response = client.post(
+        "/discussions/grove/threads",
+        headers=AUTH,
+        json={"title": "Hello world", "category": "general", "body": "x"},
+    )
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["code"] == "validation_error"
+
+
+def test_create_reply_maps_scope_access_denied(client, services):
+    services.discussion_service.create_reply.side_effect = ScopeAccessDeniedError
+    response = client.post(
+        "/discussions/threads/12/replies",
+        headers=AUTH,
+        json={"body": "Still trying"},
+    )
+    assert response.status_code == 403
+    assert response.json()["errors"][0]["code"] == "scope_access_denied"
+
+
+def test_whitespace_only_body_rejected_by_model(client, services):
+    response = client.post(
+        "/discussions/grove/threads",
+        headers=AUTH,
+        json={"title": "Hello world", "category": "general", "body": "   "},
+    )
+    assert response.status_code == 422
+    services.discussion_service.create_thread.assert_not_called()

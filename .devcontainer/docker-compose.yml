@@ -37,7 +37,8 @@ services:
       MYSQL_USER: "${MYSQL_USER:-appuser}"
       MYSQL_PASSWORD: "${MYSQL_PASSWORD:-apppass}"
     ports:
-      - "3306:3306"
+      # Loopback-only: classroom scripts refuse 0.0.0.0 publishes. Same named volume.
+      - "127.0.0.1:3306:3306"
 
 volumes:
   mysql-data-volume:

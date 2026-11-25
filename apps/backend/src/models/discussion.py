@@ -11,8 +11,12 @@ from pydantic import StringConstraints
 ThreadTitle = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=3, max_length=120)
 ]
-ThreadBody = Annotated[str, StringConstraints(min_length=1, max_length=4000)]
-ReplyBody = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+ThreadBody = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)
+]
+ReplyBody = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
+]
 
 QUEST_CATEGORIES = frozenset({"teammates", "help", "tips", "general"})
 GROVE_CATEGORIES = frozenset(

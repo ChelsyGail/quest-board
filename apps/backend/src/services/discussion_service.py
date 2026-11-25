@@ -228,13 +228,23 @@ class DiscussionService:
         category: str,
         body: str,
     ) -> ThreadRecord:
-        self._authorize_scope(user_id, scope, write=True)
+        title = (title or "").strip()
+        body = (body or "").strip()
+        if len(title) < 3:
+            raise DiscussionValidationError("Title must be at least 3 characters.")
+        if not body:
+            raise DiscussionValidationError("Message cannot be empty.")
         allowed = scope_for_category_check(scope)[1]
         if category not in allowed:
             raise DiscussionValidationError("Invalid category for this scope.")
 
         item_id = self._item_id_for_scope(scope)
         with self.engine.begin() as connection:
+            # Re-check membership inside the write transaction so a proof submit
+            # between an earlier check and this insert cannot leave a stale active post.
+            self._authorize_scope_on_connection(
+                connection, user_id, scope, write=True, lock_participation=True
+            )
             row = connection.execute(
                 text(
                     """
@@ -347,21 +357,30 @@ class DiscussionService:
     def create_reply(
         self, user_id: int, thread_id: int, *, body: str
     ) -> ReplyRecord:
-        with self.engine.connect() as connection:
+        body = (body or "").strip()
+        if not body:
+            raise DiscussionValidationError("Reply cannot be empty.")
+        with self.engine.begin() as connection:
             thread_row = connection.execute(
                 text(
                     """
                     SELECT scope
                     FROM discussion_threads
                     WHERE thread_id = :thread_id AND deleted_at IS NULL
+                    FOR UPDATE
                     """
                 ),
                 {"thread_id": thread_id},
             ).one_or_none()
-        if thread_row is None:
-            raise ThreadNotFoundError
-        self._authorize_thread_scope(user_id, thread_row.scope, write=True)
-        with self.engine.begin() as connection:
+            if thread_row is None:
+                raise ThreadNotFoundError
+            self._authorize_thread_scope_on_connection(
+                connection,
+                user_id,
+                thread_row.scope,
+                write=True,
+                lock_participation=True,
+            )
             insert = connection.execute(
                 text(
                     """
@@ -399,31 +418,84 @@ class DiscussionService:
     def _authorize_scope(
         self, user_id: int, scope: str, *, write: bool = False
     ) -> None:
+        with self.engine.connect() as connection:
+            self._authorize_scope_on_connection(
+                connection, user_id, scope, write=write, lock_participation=False
+            )
+
+    def _authorize_thread_scope(
+        self, user_id: int, scope: str, *, write: bool = False
+    ) -> None:
+        with self.engine.connect() as connection:
+            self._authorize_thread_scope_on_connection(
+                connection, user_id, scope, write=write, lock_participation=False
+            )
+
+    def _authorize_scope_on_connection(
+        self,
+        connection,
+        user_id: int,
+        scope: str,
+        *,
+        write: bool = False,
+        lock_participation: bool = False,
+    ) -> None:
         if scope == "grove":
+            # Any signed-in user. Organizer/moderator roles are not required and do
+            # not grant extra powers beyond membership of the campus Grove.
             return
         match = QUEST_SCOPE_PATTERN.match(scope)
         if not match:
             raise DiscussionValidationError(f"Unknown scope: {scope}")
         item_id = int(match.group(1))
         requested_space = match.group(2)
-        self._authorize_quest_space(user_id, item_id, requested_space, write=write)
+        self._authorize_quest_space_on_connection(
+            connection,
+            user_id,
+            item_id,
+            requested_space,
+            write=write,
+            lock_participation=lock_participation,
+        )
 
-    def _authorize_thread_scope(
-        self, user_id: int, scope: str, *, write: bool = False
+    def _authorize_thread_scope_on_connection(
+        self,
+        connection,
+        user_id: int,
+        scope: str,
+        *,
+        write: bool = False,
+        lock_participation: bool = False,
     ) -> None:
         if scope == "grove":
             return
         legacy = LEGACY_QUEST_SCOPE_PATTERN.match(scope)
         if legacy:
+            # Historical unsuffixed rows are treated as submitted-only so spoilers
+            # never re-enter the active space.
             item_id = int(legacy.group(1))
-            self._authorize_quest_space(user_id, item_id, "submitted", write=write)
+            self._authorize_quest_space_on_connection(
+                connection,
+                user_id,
+                item_id,
+                "submitted",
+                write=write,
+                lock_participation=lock_participation,
+            )
             return
         match = QUEST_SCOPE_PATTERN.match(scope)
         if not match:
             raise DiscussionValidationError(f"Unknown scope: {scope}")
         item_id = int(match.group(1))
         requested_space = match.group(2)
-        self._authorize_quest_space(user_id, item_id, requested_space, write=write)
+        self._authorize_quest_space_on_connection(
+            connection,
+            user_id,
+            item_id,
+            requested_space,
+            write=write,
+            lock_participation=lock_participation,
+        )
 
     def _authorize_quest_space(
         self,
@@ -433,8 +505,33 @@ class DiscussionService:
         *,
         write: bool = False,
     ) -> None:
-        self._require_published_quest(item_id)
-        participation = self._load_participation(user_id, item_id)
+        with self.engine.connect() as connection:
+            self._authorize_quest_space_on_connection(
+                connection,
+                user_id,
+                item_id,
+                requested_space,
+                write=write,
+                lock_participation=False,
+            )
+
+    def _authorize_quest_space_on_connection(
+        self,
+        connection,
+        user_id: int,
+        item_id: int,
+        requested_space: str,
+        *,
+        write: bool = False,
+        lock_participation: bool = False,
+    ) -> None:
+        # No organizer/moderator bypass: quest spaces require the caller's own
+        # participation phase (joined → active; confirmed proof → submitted).
+        del write  # write uses the same membership rules as read
+        self._require_published_quest_on_connection(connection, item_id)
+        participation = self._load_participation_on_connection(
+            connection, user_id, item_id, lock=lock_participation
+        )
         if participation is None:
             raise NotAMemberError
         status, current_submission_id = participation
@@ -446,16 +543,19 @@ class DiscussionService:
 
     def _require_published_quest(self, item_id: int) -> None:
         with self.engine.connect() as connection:
-            row = connection.execute(
-                text(
-                    """
-                    SELECT item_id, kind, status, archived_at
-                    FROM catalogue_items
-                    WHERE item_id = :item_id
-                    """
-                ),
-                {"item_id": item_id},
-            ).one_or_none()
+            self._require_published_quest_on_connection(connection, item_id)
+
+    def _require_published_quest_on_connection(self, connection, item_id: int) -> None:
+        row = connection.execute(
+            text(
+                """
+                SELECT item_id, kind, status, archived_at
+                FROM catalogue_items
+                WHERE item_id = :item_id
+                """
+            ),
+            {"item_id": item_id},
+        ).one_or_none()
         if row is None:
             raise ItemNotFoundError
         if row.kind != ItemKind.QUEST.value:
@@ -467,16 +567,25 @@ class DiscussionService:
         self, user_id: int, item_id: int
     ) -> tuple[str, int | None] | None:
         with self.engine.connect() as connection:
-            row = connection.execute(
-                text(
-                    """
-                    SELECT status, current_submission_id
-                    FROM participations
-                    WHERE user_id = :user_id AND item_id = :item_id
-                    """
-                ),
-                {"user_id": user_id, "item_id": item_id},
-            ).one_or_none()
+            return self._load_participation_on_connection(
+                connection, user_id, item_id, lock=False
+            )
+
+    def _load_participation_on_connection(
+        self, connection, user_id: int, item_id: int, *, lock: bool
+    ) -> tuple[str, int | None] | None:
+        lock_sql = " FOR UPDATE" if lock else ""
+        row = connection.execute(
+            text(
+                f"""
+                SELECT status, current_submission_id
+                FROM participations
+                WHERE user_id = :user_id AND item_id = :item_id
+                {lock_sql}
+                """
+            ),
+            {"user_id": user_id, "item_id": item_id},
+        ).one_or_none()
         if row is None:
             return None
         return row.status, row.current_submission_id

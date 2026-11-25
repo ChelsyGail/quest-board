@@ -121,7 +121,7 @@ describe("Quest Grove", () => {
   it("is unavailable without the prototype, with no sample data", () => {
     vi.stubEnv("VITE_DISCUSSIONS_DEMO", "false");
     renderGrove();
-    expect(screen.getByText(/Quest Grove discussions aren't available yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Quest Grove discussions aren't available in this build/)).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Discussion tree" })).not.toBeInTheDocument();
     expect(sessionStorage.getItem("questboard.demo.discussions.v1")).toBeNull();
   });

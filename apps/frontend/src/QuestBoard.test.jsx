@@ -402,7 +402,7 @@ describe("Joining and RSVP (QB-90)", () => {
     expect(screen.getByText(/after-submission discussion unlocks/i)).toBeInTheDocument();
     await user.click(joinButton());
     await screen.findByText('You joined "Campus cleanup".');
-    expect(active).toHaveTextContent("Quest discussions aren't available yet");
+    expect(active).toHaveTextContent("Quest discussions aren't available in this build");
   });
 
   it("restores the joined status after a refresh from /me/participations", async () => {

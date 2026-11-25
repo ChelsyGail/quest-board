@@ -231,3 +231,20 @@ __marimo__/
 docs/evidence/*.log
 docs/evidence/browser-*-log.txt
 docs/evidence/browser-e2e-run.txt
+
+# Classroom demo runtime / secrets
+scripts/demo.env
+var/demo-run/
+apps/frontend/.env.sites.local
+docs/presentation/*.local.md
+docs/presentation/*.local.sh
+docs/presentation/screenshots/
+/outputs/
+docs/evidence/grove-verify-*.txt
+docs/evidence/grove-api-e2e-*.txt
+
+# Local MySQL logical backups (never commit)
+var/mysql-backups/
+
+docs/presentation/ACCOUNTS.local.md
+docs/presentation/start-demo.local.sh

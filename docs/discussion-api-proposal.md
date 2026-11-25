@@ -1,13 +1,12 @@
 # Discussion API — proposal
 
-**Status: partially implemented (2026-11-18).** Persistent threads and replies exist in
-`0021_create_discussions.sql`; the backend exposes scoped routes below. Reports, rate limits,
+**Status: implemented for Grove + quest spaces (2026-11-25).** Persistent threads and replies
+live in `0021_create_discussions.sql`; the backend exposes the scoped routes below with
+server-enforced membership and active/submitted spoiler ACL. Enable the live client with
+`VITE_DISCUSSIONS_API=true` and `VITE_DISCUSSIONS_DEMO=false`. The sample demo
+(`VITE_DISCUSSIONS_DEMO=true`, DEV only) remains a separate tab-local mode and is never used
+as a silent fallback after a live failure. Reports, dedicated rate-limit middleware,
 moderator hide/delete, and WebSockets are still out of scope for this slice.
-The quest discussion section and Quest Grove remain a frontend prototype: with
-`VITE_DISCUSSIONS_DEMO=true` on the DEV server they use sample data kept in one browser tab
-(`apps/frontend/src/discussionsDemo.js`). Without it, and in every production build, they
-show that discussions aren't available. Quest Grove’s tree UI is preserved. This document
-describes what the backend would need so the prototype can be switched to a real service.
 
 ## Scopes
 
@@ -27,7 +26,9 @@ leak to students who have not yet submitted proof:
 - Confirmed submission (including Pending review) **revokes** read and post on `:active`.
 - Rejection keeps the student on `:submitted`; do **not** reopen `:active`.
 - Do not switch spaces on click/upload start — only after the submission is confirmed.
-- Moderators may follow existing product rules for oversight; membership still required for students.
+- Organizer/moderator roles do **not** bypass quest-space membership; access follows the
+  caller's own participation phase only.
+- Wrong-space requests return `403` with `scope_access_denied`; non-members get `not_a_member`.
 - Never copy or merge threads between `:active` and `:submitted`.
 
 **Legacy migration:** historical `quest:{item_id}` rows (no space suffix) must **not** be

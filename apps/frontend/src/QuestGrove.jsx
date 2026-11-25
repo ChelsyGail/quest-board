@@ -261,6 +261,9 @@ function QuestGrove({ author, onSessionExpired }) {
         <p className="small muted" aria-live="polite">
           {board.listStatus === "loaded" &&
             `${visible.length} ${visible.length === 1 ? "discussion" : "discussions"}`}
+          {board.listStatus === "loaded" && board.listMeta?.truncated
+            ? " · Showing the newest pages only — refine search or topic to narrow results."
+            : ""}
         </p>
       </section>
 

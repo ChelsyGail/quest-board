@@ -429,7 +429,7 @@ describe("Quest navigation (QB-58, QB-60, QB-90)", () => {
 
     await user.click(screen.getByRole("button", { name: "Quest Grove" }));
     expect(screen.getByRole("heading", { name: "Quest Grove" })).toBeInTheDocument();
-    expect(screen.getByText(/Quest Grove discussions aren't available yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Quest Grove discussions aren't available in this build/)).toBeInTheDocument();
   });
 
   it("keeps account settings available from the account menu", async () => {

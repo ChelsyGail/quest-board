@@ -50,6 +50,81 @@ describe("discussion prototype switch", () => {
   });
 });
 
+describe("live discussion client", () => {
+  const LIVE_AUTHOR = { id: "7", name: "Sam", token: "tok-a" };
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_DISCUSSIONS_DEMO", "false");
+    vi.stubEnv("VITE_DISCUSSIONS_API", "true");
+    vi.stubEnv("VITE_API_BASE_URL", "http://api.test");
+    clearDiscussionClientCache();
+  });
+
+  it("pages through every thread list page and reports truncation", async () => {
+    const page1 = Array.from({ length: 50 }, (_, i) => ({
+      id: String(i + 1),
+      type: "discussion-threads",
+      attributes: {
+        scope: "grove",
+        title: `T${i + 1}`,
+        category: "general",
+        body: "b",
+        author: { id: "7", name: "Sam" },
+        created_at: "2026-11-01T10:00:00Z",
+        reply_count: 0,
+      },
+    }));
+    const page2 = [
+      {
+        id: "51",
+        type: "discussion-threads",
+        attributes: {
+          scope: "grove",
+          title: "T51",
+          category: "general",
+          body: "b",
+          author: { id: "7", name: "Sam" },
+          created_at: "2026-11-02T10:00:00Z",
+          reply_count: 0,
+        },
+      },
+    ];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: page1,
+          meta: { page: { number: 1, size: 50, total_items: 51, total_pages: 2 } },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: page2,
+          meta: { page: { number: 2, size: 50, total_items: 51, total_pages: 2 } },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = getDiscussionClient(LIVE_AUTHOR);
+    const result = await client.listThreads("grove", { query: "hello", category: "general" });
+    expect(result.threads).toHaveLength(51);
+    expect(result.meta).toEqual({ totalItems: 51, totalPages: 2, truncated: false });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("page%5Bnumber%5D=1");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("q=hello");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("page%5Bnumber%5D=2");
+  });
+
+  it("never falls back to demo after a live failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    const client = getDiscussionClient(LIVE_AUTHOR);
+    expect(client.isPrototype).toBe(false);
+    await expect(client.listThreads("grove")).rejects.toMatchObject({ status: 0 });
+  });
+});
+
 describe("quest discussion spaces", () => {
   const participation = (status) => ({ id: "p1", itemId: "1", status });
 

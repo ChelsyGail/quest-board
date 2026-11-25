@@ -39,18 +39,18 @@
 | Auth media GET | PR #24 | `GET /media/{id}` + FE `hydrateMediaUrls` | **In scope** |
 | Leave item / groups | prior integration | `participation_service` | **In scope** (leave blocked after any proof) |
 | Catalogue student TZ windows | our tip | `catalogue_router` window_start/end | **In scope** |
-| Quest Grove / discussions | migration `0021` + `/discussions/*` + FE client | gated by `VITE_DISCUSSIONS_*=false` | **Deferred** — code retained, **not** independently accepted |
+| Quest Grove / discussions | migration `0021` + `/discussions/*` + FE live client | `VITE_DISCUSSIONS_API=true` / `DEMO=false` for live verify | **In review on `taha-quest-grove`** — not merged/deployed yet |
 
-## Grove / discussions — deferred gating
+## Grove / discussions — live gating
 
-Keep **both** false for this release:
+For live Grove + quest discussions:
 
 ```
 VITE_DISCUSSIONS_DEMO=false
-VITE_DISCUSSIONS_API=false
+VITE_DISCUSSIONS_API=true
 ```
 
-With those flags, Quest Grove / quest discussion UI shows **Coming soon / aren't available yet** (nav may still exist). Backend routes and migration `0021` stay applied but are out of release acceptance until next week. Do **not** delete or revert the implementation. Additional gating required for a hard cut: leave flags false in every deployed env; optional future: hide Grove nav when mode is off (not required — unavailable page is sufficient).
+Keep both false only when deliberately hiding the feature. Sample demo (`DEMO=true`, DEV only) stays a separate mode and must not be enabled together with the API flag. Live mode never falls back to sessionStorage after an error.
 
 ## Verification (S9 — Antigravity findings fixed; supersedes S8 tip claims)
 

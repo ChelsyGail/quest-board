@@ -135,3 +135,16 @@ Participation/review payloads may expose a `twist` field. **Twists (BE-26/BE-29)
 - `docs/FINAL_SPRINT_RC.md` — release-candidate notes
 - `docs/discussion-api-proposal.md` — discussion scopes (partially implemented)
 - `docs/evidence/` — local verification artifacts (may be regenerated; avoid committing secrets)
+
+## Classroom demo (ChatGPT Sites + laptop API)
+
+Students use a **Sites** frontend (QR). The laptop runs MySQL + FastAPI; an HTTPS tunnel exposes **only the API**.
+
+```bash
+bash scripts/start-demo.sh
+bash scripts/check-demo.sh
+bash scripts/build-sites-frontend.sh   # after tunnel URL is known / if it changed
+bash scripts/stop-demo.sh
+```
+
+Full runbook: [`DEMO_START.md`](DEMO_START.md). Hosting notes: [`docs/HOSTING_CHATGPT_SITES.md`](docs/HOSTING_CHATGPT_SITES.md).

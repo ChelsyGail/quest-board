@@ -739,3 +739,176 @@ def test_proof_rejects_unsupported_type_and_text_only_ok(world):
     )
     assert text_only.status_code == 201, text_only.text
     assert text_only.json()["data"]["attributes"]["media"] == []
+
+
+def test_discussions_grove_and_quest_space_acl(world):
+    """MySQL-backed Grove persistence + quest active/submitted spoiler ACL."""
+    client = world["client"]
+    run = world["run"]
+    marker = f"Grove IT {run}"
+
+    unauth = client.get("/discussions/grove/threads")
+    assert unauth.status_code == 401
+
+    created = client.post(
+        "/discussions/grove/threads",
+        headers=world["student"],
+        json={
+            "title": marker,
+            "category": "campus-life",
+            "body": f"Hello from student A ({run})",
+        },
+    )
+    assert created.status_code == 201, created.text
+    thread_id = created.json()["data"]["id"]
+    assert created.json()["data"]["attributes"]["author"]["id"]
+
+    listed_b = client.get(
+        "/discussions/grove/threads",
+        headers=world["student_b"],
+        params={"q": marker, "page[size]": 50},
+    )
+    assert listed_b.status_code == 200, listed_b.text
+    ids = [row["id"] for row in listed_b.json()["data"]]
+    assert thread_id in ids
+
+    reply = client.post(
+        f"/discussions/threads/{thread_id}/replies",
+        headers=world["student_b"],
+        json={"body": f"Reply from B ({run})"},
+    )
+    assert reply.status_code == 201, reply.text
+
+    detail = client.get(
+        f"/discussions/threads/{thread_id}", headers=world["student"]
+    )
+    assert detail.status_code == 200
+    bodies = [row["attributes"]["body"] for row in detail.json()["meta"]["replies"]]
+    assert f"Reply from B ({run})" in bodies
+
+    whitespace = client.post(
+        "/discussions/grove/threads",
+        headers=world["student"],
+        json={"title": "Valid title here", "category": "general", "body": "   "},
+    )
+    assert whitespace.status_code == 422
+
+    item_id = create_published(
+        world,
+        f"Discussion ACL {run}",
+        "2028-09-01T10:00:00+02:00",
+        "2028-09-01T12:00:00+02:00",
+    )
+    other_item = create_published(
+        world,
+        f"Other quest {run}",
+        "2028-09-02T10:00:00+02:00",
+        "2028-09-02T12:00:00+02:00",
+    )
+
+    # Non-member cannot read/post either space.
+    denied = client.get(
+        f"/discussions/quests/{item_id}/spaces/active/threads",
+        headers=world["student"],
+    )
+    assert denied.status_code == 403
+    assert denied.json()["errors"][0]["code"] == "not_a_member"
+
+    joined = client.post(f"/items/{item_id}/join", headers=world["student"])
+    assert joined.status_code == 201, joined.text
+    participation_id = joined.json()["data"]["id"]
+
+    # Joined group peer has independent access (student_b not joined yet).
+    peer_denied = client.get(
+        f"/discussions/quests/{item_id}/spaces/active/threads",
+        headers=world["student_b"],
+    )
+    assert peer_denied.status_code == 403
+
+    active_thread = client.post(
+        f"/discussions/quests/{item_id}/spaces/active/threads",
+        headers=world["student"],
+        json={
+            "title": f"Active tip {run}",
+            "category": "tips",
+            "body": "Pre-proof coordination",
+        },
+    )
+    assert active_thread.status_code == 201, active_thread.text
+    active_id = active_thread.json()["data"]["id"]
+
+    submitted_before = client.get(
+        f"/discussions/quests/{item_id}/spaces/submitted/threads",
+        headers=world["student"],
+    )
+    assert submitted_before.status_code == 403
+    assert submitted_before.json()["errors"][0]["code"] == "scope_access_denied"
+
+    proof = client.post(
+        f"/participations/{participation_id}/submissions",
+        headers=world["student"],
+        json={"text": f"Proof for discussion ACL {run}"},
+    )
+    assert proof.status_code == 201, proof.text
+
+    # Confirmed proof flips spaces; direct active list/detail/reply denied.
+    active_after = client.get(
+        f"/discussions/quests/{item_id}/spaces/active/threads",
+        headers=world["student"],
+    )
+    assert active_after.status_code == 403
+    assert active_after.json()["errors"][0]["code"] == "scope_access_denied"
+
+    active_detail = client.get(
+        f"/discussions/threads/{active_id}", headers=world["student"]
+    )
+    assert active_detail.status_code == 403
+
+    active_reply = client.post(
+        f"/discussions/threads/{active_id}/replies",
+        headers=world["student"],
+        json={"body": "Should not post"},
+    )
+    assert active_reply.status_code == 403
+
+    submitted_ok = client.post(
+        f"/discussions/quests/{item_id}/spaces/submitted/threads",
+        headers=world["student"],
+        json={
+            "title": f"Submitted note {run}",
+            "category": "general",
+            "body": "Spoilers ok after proof",
+        },
+    )
+    assert submitted_ok.status_code == 201, submitted_ok.text
+    submitted_id = submitted_ok.json()["data"]["id"]
+
+    # Other quest member cannot use this thread id.
+    client.post(f"/items/{other_item}/join", headers=world["student_b"])
+    cross = client.get(
+        f"/discussions/threads/{submitted_id}", headers=world["student_b"]
+    )
+    assert cross.status_code == 403
+
+    # Reject keeps submitted; does not reopen active.
+    services = world["services"]
+    with services.user_service.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE participations SET status = 'rejected' "
+                "WHERE participation_id = :pid"
+            ),
+            {"pid": int(participation_id)},
+        )
+
+    still_submitted = client.get(
+        f"/discussions/quests/{item_id}/spaces/submitted/threads",
+        headers=world["student"],
+    )
+    assert still_submitted.status_code == 200
+    still_active = client.get(
+        f"/discussions/quests/{item_id}/spaces/active/threads",
+        headers=world["student"],
+    )
+    assert still_active.status_code == 403
+    assert still_active.json()["errors"][0]["code"] == "scope_access_denied"
