@@ -18,8 +18,9 @@ export function DiscussionsUnavailable({ what = "Discussions" }) {
     <div className="panel-state discussion-unavailable">
       <p className="eyebrow">Coming soon</p>
       <p>
-        {what} aren't available yet. They need a discussion service on the QuestBoard
-        backend, which hasn't been built.
+        {what} aren't available in this release. Discussion routes exist on the
+        backend but stay turned off until Grove is independently accepted — keep
+        both discussion demo and API flags false.
       </p>
     </div>
   );
