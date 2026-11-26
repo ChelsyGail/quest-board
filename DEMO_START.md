@@ -2,6 +2,17 @@
 
 Students open a **stable Sites frontend** (QR code). The laptop runs **MySQL + FastAPI** and an **HTTPS tunnel for the API only**. MySQL is never published.
 
+## Double-click shortcuts (this Mac)
+
+In the repo root:
+
+| Shortcut | What it does |
+|---|---|
+| **`Start QuestBoard.command`** | Opens Docker if needed, starts MySQL (existing volume), API, tunnel, caffeinate; runs health checks; opens the Sites URL **only** when the published frontend matches the current API (or a stable tunnel is configured). |
+| **`Stop QuestBoard.command`** | Stops only verified demo API / tunnel / caffeinate PIDs. Never wipes DB, deletes uploads, or kills unrelated processes. |
+
+First launch: macOS may ask to allow the script — right-click → Open, or `chmod +x` (already set in git).
+
 ## Exact commands (presentation day)
 
 ```bash
@@ -9,19 +20,36 @@ cd /path/to/quest-board
 
 # One-time on this laptop (if not done yet): copy env and install tools — see below.
 
+# Prefer the .command shortcuts, or:
 bash scripts/start-demo.sh
 bash scripts/check-demo.sh
 
-# If the printed Public API URL is new or changed, rebuild + re-publish Sites:
+# If the printed Public API URL is new or changed (quick tunnel), rebuild + re-publish Sites:
 bash scripts/build-sites-frontend.sh
 # then upload apps/frontend/dist/ to ChatGPT Sites.
 # QR stays the same if it already targets the unchanged Sites URL (never put the tunnel on the QR).
 
 # After class:
 bash scripts/stop-demo.sh
+# or double-click Stop QuestBoard.command
 ```
 
 Do **not** run `npm run dev` for the hosted presentation. Sites serves the production `dist/` build.
+
+### Stable tunnel (recommended — one-time)
+
+This laptop currently has **no** named Cloudflare tunnel config and **no** ngrok reserved domain. Quick tunnels (`*.trycloudflare.com`) **change every start** and are **not** stable.
+
+Pick one free option you already can use (this project does not purchase domains):
+
+1. **Cloudflare named tunnel** (free with a Cloudflare account + a hostname you control): create a tunnel, write a config file whose ingress points `https://YOUR_API_HOST` → `http://127.0.0.1:8010`, then set in `scripts/demo.env`:
+   ```bash
+   DEMO_CLOUDFLARED_CONFIG=/absolute/path/to/config.yml
+   DEMO_TUNNEL_HOSTNAME=YOUR_API_HOST
+   ```
+2. **ngrok reserved domain** (only if you already have one): install `ngrok`, authenticate, set `DEMO_TUNNEL_PROVIDER=ngrok` and `DEMO_NGROK_DOMAIN=…`.
+
+Until then: every Start may print a new public API URL → rebuild/re-upload Sites before claiming students can use the QR link.
 
 | URL | Role |
 |---|---|

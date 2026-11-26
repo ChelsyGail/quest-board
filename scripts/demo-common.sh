@@ -13,12 +13,14 @@ RUN_DIR="${DEMO_RUN_DIR:-$ROOT/var/demo-run}"
 PID_FILE="$RUN_DIR/demo.pids"
 URL_FILE="$RUN_DIR/api-public-url.txt"
 PREV_URL_FILE="$RUN_DIR/api-public-url.prev.txt"
+LOCK_FILE="$RUN_DIR/start.lock"
 API_LOG="$RUN_DIR/api.log"
 TUNNEL_LOG="$RUN_DIR/tunnel.log"
 CAFFEINATE_LOG="$RUN_DIR/caffeinate.log"
 ENV_FILE="${DEMO_ENV_FILE:-$ROOT/scripts/demo.env}"
 DEVCONTAINER_ENV="${DEVCONTAINER_ENV:-$ROOT/.devcontainer/.env}"
 SCHEMA_DIR="$ROOT/apps/backend/src/database/schema"
+COMPOSE_FILE="$ROOT/.devcontainer/docker-compose.yml"
 
 demo_mkdir() {
   mkdir -p "$RUN_DIR" "$ROOT/apps/backend/var"
@@ -50,6 +52,9 @@ demo_load_env() {
   # Classroom demo aliases (admin/mod). Backend + Sites FE must agree.
   export QUESTBOARD_CLASSROOM_DEMO="${QUESTBOARD_CLASSROOM_DEMO:-1}"
   export VITE_CLASSROOM_DEMO="${VITE_CLASSROOM_DEMO:-true}"
+  export SITES_ORIGIN="${SITES_ORIGIN:-}"
+  export DEMO_DOCKER_WAIT_SECONDS="${DEMO_DOCKER_WAIT_SECONDS:-90}"
+  export DEMO_RECOVER_ATTEMPTS="${DEMO_RECOVER_ATTEMPTS:-2}"
 
   if [[ -z "${PROOF_MEDIA_DIR:-}" ]]; then
     export PROOF_MEDIA_DIR="$ROOT/apps/backend/var/proof-media-presentation"
@@ -410,4 +415,156 @@ PY
     return 1
   fi
   printf '%s' "$pid"
+}
+
+# --- Startup lock (prevent simultaneous Start runs) ---
+demo_acquire_lock() {
+  demo_mkdir
+  local waited=0
+  while ! mkdir "$LOCK_FILE" 2>/dev/null; do
+    local holder=""
+    [[ -f "$LOCK_FILE/pid" ]] && holder="$(cat "$LOCK_FILE/pid" 2>/dev/null || true)"
+    if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
+      echo "Clearing stale start lock (pid $holder gone)."
+      rm -rf "$LOCK_FILE"
+      continue
+    fi
+    if [[ "$waited" -ge 45 ]]; then
+      echo "ERROR: another Start QuestBoard run is in progress (lock $LOCK_FILE${holder:+, pid $holder})." >&2
+      echo "       Wait, or remove the lock only if you are sure no start is running." >&2
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  printf '%s\n' "$$" >"$LOCK_FILE/pid"
+  # shellcheck disable=SC2064
+  trap 'rm -rf "$LOCK_FILE"' EXIT
+}
+
+demo_release_lock() {
+  rm -rf "$LOCK_FILE" 2>/dev/null || true
+  trap - EXIT
+}
+
+# --- Docker Desktop readiness (macOS) ---
+demo_docker_ready() {
+  command -v docker >/dev/null 2>&1 || return 1
+  docker info >/dev/null 2>&1
+}
+
+demo_ensure_docker() {
+  local seconds="${DEMO_DOCKER_WAIT_SECONDS:-90}"
+  if demo_docker_ready; then
+    echo "Docker is ready."
+    return 0
+  fi
+  if [[ "$(uname -s)" == "Darwin" ]] && [[ -d /Applications/Docker.app ]]; then
+    echo "Docker is not ready — opening Docker Desktop…"
+    open -a Docker >/dev/null 2>&1 || true
+  else
+    echo "ERROR: Docker is not available. Install/start Docker, then retry." >&2
+    return 1
+  fi
+  local i
+  for ((i = 0; i < seconds; i++)); do
+    if demo_docker_ready; then
+      echo "Docker ready after ${i}s."
+      return 0
+    fi
+    sleep 1
+  done
+  echo "ERROR: Docker Desktop did not become ready within ${seconds}s." >&2
+  echo "       Open Docker Desktop manually, wait until it says Running, then Start again." >&2
+  return 1
+}
+
+demo_ensure_mysql_container() {
+  if mysql_ping; then
+    return 0
+  fi
+  demo_ensure_docker || return 1
+  if docker ps -a --format '{{.Names}}' | grep -qx "$DEMO_MYSQL_CONTAINER"; then
+    echo "Starting existing MySQL container '$DEMO_MYSQL_CONTAINER' (same volume; no wipe)…"
+    docker start "$DEMO_MYSQL_CONTAINER" >/dev/null
+  elif [[ -f "$COMPOSE_FILE" ]]; then
+    echo "MySQL container missing — creating from Compose (named volume preserved if present)…"
+    (cd "$(dirname "$COMPOSE_FILE")" && docker compose up -d --no-deps mysql-db-service) || return 1
+  else
+    echo "ERROR: MySQL container '$DEMO_MYSQL_CONTAINER' not found and no Compose file." >&2
+    return 1
+  fi
+  local i
+  for ((i = 0; i < 45; i++)); do
+    mysql_ping && return 0
+    sleep 1
+  done
+  echo "ERROR: MySQL did not accept connections at ${MYSQL_HOST}:${MYSQL_PORT}." >&2
+  return 1
+}
+
+demo_local_api_healthy() {
+  curl -fsS --max-time 3 "$(api_health_url)" >/dev/null 2>&1
+}
+
+# Probe public URL; print body to FD3-ish via globals / files. Detect tunnel-not-found pages.
+# Returns 0 if /health looks OK.
+demo_public_health_probe() {
+  local url="$1"
+  local out_file="${2:-$RUN_DIR/public-health.body}"
+  local code_file="${3:-$RUN_DIR/public-health.code}"
+  local host rest ip port code
+  : >"$out_file"
+  rest="${url#https://}"
+  rest="${rest#http://}"
+  host="${rest%%/*}"
+  host="${host%%:*}"
+  ip="$(dig +short "$host" @1.1.1.1 A 2>/dev/null | awk 'NR==1 && $1 ~ /^[0-9.]+$/ {print; exit}')"
+  if [[ "$url" == https://* ]]; then port=443; else port=80; fi
+  if [[ -n "$ip" ]]; then
+    code="$(curl -sS -o "$out_file" -w '%{http_code}' --max-time 12 \
+      --resolve "${host}:${port}:${ip}" "${url}/health" 2>/dev/null || echo 000)"
+  else
+    code="$(curl -sS -o "$out_file" -w '%{http_code}' --max-time 12 \
+      "${url}/health" 2>/dev/null || echo 000)"
+  fi
+  printf '%s' "$code" >"$code_file"
+  if grep -Eiq 'Unauthorized|Tunnel not found|error code: 1033|Error 1033' "$out_file" 2>/dev/null; then
+    return 2
+  fi
+  if [[ "$code" == "200" ]] && grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"|status.:.ok' "$out_file" 2>/dev/null; then
+    return 0
+  fi
+  if [[ "$code" == "200" ]] && grep -qi 'ok' "$out_file" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+demo_tunnel_log_looks_dead() {
+  [[ -f "$TUNNEL_LOG" ]] || return 1
+  grep -Eiq 'Unauthorized: Tunnel not found|tunnel not found|failed to sufficiently connect|context canceled|connection refused' "$TUNNEL_LOG"
+}
+
+# Fetch the API origin baked into the published Sites bundle (best-effort).
+demo_sites_baked_api_origin() {
+  local origin="${SITES_ORIGIN:-}"
+  [[ -n "$origin" ]] || return 1
+  origin="${origin%/}"
+  local html js_path js_url
+  html="$(curl -fsS --max-time 15 "$origin/" 2>/dev/null || true)"
+  [[ -n "$html" ]] || return 1
+  js_path="$(printf '%s' "$html" | grep -Eo '/assets/index-[^\"'\'']+\.js' | head -n1 || true)"
+  [[ -n "$js_path" ]] || return 1
+  js_url="$origin$js_path"
+  curl -fsS --max-time 30 "$js_url" 2>/dev/null \
+    | grep -Eo 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com|https://[a-zA-Z0-9.-]+' \
+    | grep -E 'trycloudflare\.com|ngrok|DEMO_API|questboard|api\.' \
+    | head -n1 || true
+}
+
+demo_is_stable_tunnel_configured() {
+  [[ -n "${DEMO_CLOUDFLARED_CONFIG:-}" && -n "${DEMO_TUNNEL_HOSTNAME:-}" ]] && return 0
+  [[ "${DEMO_TUNNEL_PROVIDER:-}" == "ngrok" && -n "${DEMO_NGROK_DOMAIN:-}" ]] && return 0
+  return 1
 }

@@ -10,6 +10,7 @@ source "$SCRIPT_DIR/demo-common.sh"
 
 demo_mkdir
 demo_load_env
+demo_acquire_lock || exit 1
 
 echo "=== QuestBoard classroom demo — start ==="
 echo "Repo:     $ROOT"
@@ -24,6 +25,7 @@ command -v curl >/dev/null 2>&1 || missing+=("curl")
 command -v lsof >/dev/null 2>&1 || missing+=("lsof")
 command -v mysql >/dev/null 2>&1 || missing+=("mysql client")
 command -v mysqladmin >/dev/null 2>&1 || missing+=("mysqladmin")
+command -v dig >/dev/null 2>&1 || missing+=("dig")
 if ! demo_poetry_python >/dev/null 2>&1; then
   missing+=("Poetry backend Python (run: cd apps/backend && poetry install)")
 fi
@@ -38,83 +40,58 @@ if [[ "$(uname -s)" == "Darwin" ]] && ! command -v caffeinate >/dev/null 2>&1; t
   echo "WARNING: caffeinate not found; laptop may sleep during the demo." >&2
 fi
 
-# --- MySQL (do not expose publicly; start existing container only if needed) ---
-if ! mysql_ping; then
-  if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx "$DEMO_MYSQL_CONTAINER"; then
-    echo "Starting MySQL container '$DEMO_MYSQL_CONTAINER' (localhost only)…"
-    docker start "$DEMO_MYSQL_CONTAINER" >/dev/null
-    for _ in $(seq 1 30); do
-      mysql_ping && break
-      sleep 1
-    done
-  fi
-fi
-if ! mysql_ping; then
-  echo "ERROR: MySQL is not reachable at ${MYSQL_HOST}:${MYSQL_PORT}." >&2
-  echo "       Start your local Docker MySQL (or set DEMO_MYSQL_CONTAINER), then re-run." >&2
-  echo "       This script never publishes MySQL beyond its existing localhost binding." >&2
-  exit 1
+# --- Stable tunnel availability (honest report; never call trycloudflare "stable") ---
+if demo_is_stable_tunnel_configured; then
+  echo "Stable tunnel config detected (named Cloudflare hostname or ngrok reserved domain)."
+else
+  echo "NOTE: No stable tunnel is configured on this Mac."
+  echo "      DEMO_CLOUDFLARED_CONFIG / DEMO_TUNNEL_HOSTNAME are empty; ngrok reserved domain not set."
+  echo "      Quick tunnels (*.trycloudflare.com) change every start and are NOT stable."
+  echo "      One-time setup for a fixed API hostname (free Cloudflare named tunnel OR ngrok reserved"
+  echo "      domain you already own) — see DEMO_START.md. Nothing was purchased from this script."
+  echo
 fi
 
+# --- Docker + MySQL (existing volume only; never down -v / wipe) ---
+demo_ensure_mysql_container || exit 1
 if ! mysql_query "SELECT 1" >/dev/null 2>&1; then
   echo "ERROR: cannot use database '$MYSQL_DATABASE'." >&2
   echo "       Create/select the presentation DB first. Refusing to create or wipe data." >&2
   exit 1
 fi
-
 demo_mysql_binding_check || exit 1
 demo_require_schema || exit 1
 echo "MySQL OK — $MYSQL_DATABASE. Data and uploads are preserved (no seed/wipe on start)."
 
-# --- FastAPI ---
-existing_api_pid="$(demo_read_pid api 2>/dev/null || true)"
-if demo_pid_alive "$existing_api_pid"; then
-  if wait_http_ok "$(api_health_url)" 3; then
-    echo "API already running from a previous demo start (pid $existing_api_pid)."
-  else
-    echo "ERROR: tracked API pid $existing_api_pid is alive but /health failed." >&2
-    echo "       Run: bash scripts/stop-demo.sh   then start again." >&2
-    exit 1
+# --- Ensure classroom accounts (idempotent; presentation only) ---
+ensure_classroom_accounts() {
+  if [[ "${QUESTBOARD_CLASSROOM_DEMO}" != "1" && "${QUESTBOARD_CLASSROOM_DEMO}" != "true" ]]; then
+    return 0
   fi
-else
-  if port_listening "$DEMO_API_PORT"; then
-    owner="$(port_owner_pid "$DEMO_API_PORT" || true)"
-    if curl -fsS --max-time 2 "$(api_health_url)" >/dev/null 2>&1; then
-      echo "ERROR: port ${DEMO_API_PORT} already serves /health but is not tracked by these scripts (pid ${owner:-unknown})." >&2
-      echo "       Stop that process yourself, or set DEMO_API_PORT to a free port in scripts/demo.env." >&2
-      echo "       Refusing to steal an unrelated listener." >&2
-      exit 1
-    fi
-    echo "ERROR: port ${DEMO_API_PORT} is occupied (pid ${owner:-unknown}) and is not a healthy QuestBoard API." >&2
-    echo "       Free the port or change DEMO_API_PORT. Not killing unrelated services." >&2
-    exit 1
+  if [[ -z "${CLASSROOM_DEMO_ADMIN_PASSWORD:-}" || -z "${CLASSROOM_DEMO_MOD_PASSWORD:-}" ]]; then
+    echo "WARNING: QUESTBOARD_CLASSROOM_DEMO is on but CLASSROOM_DEMO_*_PASSWORD is unset."
+    echo "         Set them in scripts/demo.env (see ACCOUNTS.local.md). Aliases will 401 until then."
+    return 0
   fi
+  echo "Ensuring classroom demo accounts on ${MYSQL_DATABASE}…"
+  (
+    cd "$ROOT/apps/backend/src"
+    MYSQL_HOST="$MYSQL_HOST" MYSQL_PORT="$MYSQL_PORT" \
+      MYSQL_DATABASE="$MYSQL_DATABASE" MYSQL_USER="$MYSQL_USER" \
+      MYSQL_PASSWORD="$MYSQL_PASSWORD" \
+      CLASSROOM_DEMO_ADMIN_PASSWORD="$CLASSROOM_DEMO_ADMIN_PASSWORD" \
+      CLASSROOM_DEMO_MOD_PASSWORD="$CLASSROOM_DEMO_MOD_PASSWORD" \
+      "$POETRY_PY" -m jobs.ensure_classroom_demo_accounts \
+        --i-understand-this-targets-presentation-only
+  )
+}
 
-  if [[ "${QUESTBOARD_CLASSROOM_DEMO}" == "1" || "${QUESTBOARD_CLASSROOM_DEMO}" == "true" ]]; then
-    if [[ -n "${CLASSROOM_DEMO_ADMIN_PASSWORD:-}" && -n "${CLASSROOM_DEMO_MOD_PASSWORD:-}" ]]; then
-      echo "Ensuring classroom demo accounts on ${MYSQL_DATABASE}…"
-      (
-        cd "$ROOT/apps/backend/src"
-        MYSQL_HOST="$MYSQL_HOST" MYSQL_PORT="$MYSQL_PORT" \
-          MYSQL_DATABASE="$MYSQL_DATABASE" MYSQL_USER="$MYSQL_USER" \
-          MYSQL_PASSWORD="$MYSQL_PASSWORD" \
-          CLASSROOM_DEMO_ADMIN_PASSWORD="$CLASSROOM_DEMO_ADMIN_PASSWORD" \
-          CLASSROOM_DEMO_MOD_PASSWORD="$CLASSROOM_DEMO_MOD_PASSWORD" \
-          "$POETRY_PY" -m jobs.ensure_classroom_demo_accounts \
-            --i-understand-this-targets-presentation-only
-      ) || {
-        echo "ERROR: failed to ensure classroom demo accounts." >&2
-        exit 1
-      }
-    else
-      echo "WARNING: QUESTBOARD_CLASSROOM_DEMO is on but CLASSROOM_DEMO_*_PASSWORD is unset."
-      echo "         Set them in scripts/demo.env (see ACCOUNTS.local.md). Aliases will 401 until then."
-    fi
-  fi
-
+# --- FastAPI: reuse if healthy; recover tracked failures only ---
+start_api_process() {
+  ensure_classroom_accounts || return 1
   echo "Starting FastAPI on ${DEMO_API_HOST}:${DEMO_API_PORT}…"
   : >"$API_LOG"
-  # Bind loopback only — phones reach the API solely through the HTTPS tunnel.
+  local api_pid
   api_pid="$(
     cd "$ROOT/apps/backend/src"
     demo_daemonize "$API_LOG" \
@@ -132,22 +109,69 @@ else
           --port "$DEMO_API_PORT"
   )" || {
     echo "ERROR: failed to daemonize API. See $API_LOG" >&2
-    exit 1
+    return 1
   }
   demo_write_pids api "$api_pid"
   if ! wait_http_ok "$(api_health_url)" 25; then
     echo "ERROR: API did not become healthy. See $API_LOG" >&2
-    demo_kill_tracked api
-    exit 1
+    demo_kill_tracked api || true
+    return 1
   fi
   echo "API OK — pid $api_pid — $(api_health_url)"
-fi
+}
+
+ensure_api() {
+  local attempt
+  for ((attempt = 0; attempt <= DEMO_RECOVER_ATTEMPTS; attempt++)); do
+    local existing_api_pid
+    existing_api_pid="$(demo_read_pid api 2>/dev/null || true)"
+    if demo_pid_alive "$existing_api_pid" && demo_pid_matches_role api "$existing_api_pid"; then
+      if demo_local_api_healthy; then
+        echo "API already healthy (pid $existing_api_pid)."
+        return 0
+      fi
+      echo "Tracked API pid $existing_api_pid is alive but /health failed — recovering API only…"
+      demo_kill_tracked api || true
+    elif [[ -n "$existing_api_pid" ]]; then
+      echo "Clearing stale/mismatched API pid $existing_api_pid."
+      demo_clear_pid api
+    fi
+
+    if port_listening "$DEMO_API_PORT"; then
+      local owner
+      owner="$(port_owner_pid "$DEMO_API_PORT" || true)"
+      if demo_local_api_healthy; then
+        if [[ -n "$owner" ]] && demo_pid_matches_role api "$owner"; then
+          demo_write_pids api "$owner"
+          echo "Adopted healthy API already listening on ${DEMO_API_PORT} (pid $owner)."
+          return 0
+        fi
+        echo "ERROR: port ${DEMO_API_PORT} serves /health but is not a tracked QuestBoard API (pid ${owner:-unknown})." >&2
+        echo "       Stop that process yourself, or change DEMO_API_PORT. Refusing to steal it." >&2
+        return 1
+      fi
+      echo "ERROR: port ${DEMO_API_PORT} is occupied (pid ${owner:-unknown}) and is not healthy." >&2
+      echo "       Free the port or change DEMO_API_PORT. Not killing unrelated services." >&2
+      return 1
+    fi
+
+    if start_api_process; then
+      return 0
+    fi
+    echo "API start attempt $((attempt + 1)) failed."
+    sleep 1
+  done
+  echo "ERROR: could not start a healthy API after $((DEMO_RECOVER_ATTEMPTS + 1)) attempts." >&2
+  return 1
+}
+
+ensure_api || exit 1
 
 # --- Keep laptop awake (macOS) ---
 if [[ "$(uname -s)" == "Darwin" ]] && command -v caffeinate >/dev/null 2>&1; then
   caff_pid="$(demo_read_pid caffeinate 2>/dev/null || true)"
-  if ! demo_pid_alive "$caff_pid"; then
-    # -i idle sleep, -m disk sleep, -s system sleep on AC; no display assertion.
+  if ! demo_pid_alive "$caff_pid" || ! demo_pid_matches_role caffeinate "$caff_pid"; then
+    [[ -n "$caff_pid" ]] && demo_clear_pid caffeinate
     : >"$CAFFEINATE_LOG"
     caff_pid="$(demo_daemonize "$CAFFEINATE_LOG" caffeinate -ims)" || {
       echo "WARNING: could not start caffeinate." >&2
@@ -173,17 +197,9 @@ start_named_cloudflared() {
   fi
   if [[ -z "${DEMO_TUNNEL_HOSTNAME:-}" ]]; then
     echo "ERROR: DEMO_CLOUDFLARED_CONFIG is set but DEMO_TUNNEL_HOSTNAME is empty." >&2
-    echo "       Set the stable hostname that the config routes to this API." >&2
     return 1
   fi
-  local existing
-  existing="$(demo_read_pid tunnel 2>/dev/null || true)"
-  if demo_pid_alive "$existing"; then
-    public_url="https://${DEMO_TUNNEL_HOSTNAME}"
-    stable=1
-    return 0
-  fi
-  echo "Starting named Cloudflare tunnel (stable hostname)…"
+  echo "Starting named Cloudflare tunnel → https://${DEMO_TUNNEL_HOSTNAME}"
   : >"$TUNNEL_LOG"
   local tpid
   tpid="$(demo_daemonize "$TUNNEL_LOG" "$bin" tunnel --config "$DEMO_CLOUDFLARED_CONFIG" run)" || return 1
@@ -196,14 +212,7 @@ start_named_cloudflared() {
 
 start_quick_cloudflared() {
   local bin="$1"
-  local existing
-  existing="$(demo_read_pid tunnel 2>/dev/null || true)"
-  if demo_pid_alive "$existing" && [[ -f "$URL_FILE" ]]; then
-    public_url="$(tr -d '[:space:]' <"$URL_FILE")"
-    echo "Tunnel already running (pid $existing) → $public_url"
-    return 0
-  fi
-  echo "Starting Cloudflare quick tunnel (hostname changes every start)…"
+  echo "Starting Cloudflare quick tunnel (hostname changes every start — NOT stable)…"
   : >"$TUNNEL_LOG"
   local tpid
   tpid="$(demo_daemonize "$TUNNEL_LOG" "$bin" tunnel --url "http://${DEMO_API_HOST}:${DEMO_API_PORT}" --no-autoupdate)" || {
@@ -213,6 +222,11 @@ start_quick_cloudflared() {
   demo_write_pids tunnel "$tpid"
   local i url=""
   for ((i = 0; i < 40; i++)); do
+    if demo_tunnel_log_looks_dead; then
+      echo "ERROR: cloudflared log reports a dead/unauthorized tunnel. See $TUNNEL_LOG" >&2
+      demo_kill_tracked tunnel || true
+      return 1
+    fi
     url="$(grep -Eo 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$TUNNEL_LOG" | tail -n1 || true)"
     if [[ -n "$url" ]]; then
       break
@@ -225,8 +239,7 @@ start_quick_cloudflared() {
   done
   if [[ -z "$url" ]]; then
     echo "ERROR: could not read quick-tunnel URL from $TUNNEL_LOG" >&2
-    echo "       Install/authenticate cloudflared, or configure a named tunnel." >&2
-    demo_kill_tracked tunnel
+    demo_kill_tracked tunnel || true
     return 1
   fi
   public_url="$url"
@@ -238,12 +251,6 @@ start_ngrok() {
     echo "ERROR: DEMO_TUNNEL_PROVIDER=ngrok but ngrok is not on PATH." >&2
     return 1
   fi
-  local existing
-  existing="$(demo_read_pid tunnel 2>/dev/null || true)"
-  if demo_pid_alive "$existing" && [[ -f "$URL_FILE" ]]; then
-    public_url="$(tr -d '[:space:]' <"$URL_FILE")"
-    return 0
-  fi
   local args=(http "${DEMO_API_HOST}:${DEMO_API_PORT}" --log=stdout)
   if [[ -n "${DEMO_NGROK_DOMAIN:-}" ]]; then
     args+=(--domain="$DEMO_NGROK_DOMAIN")
@@ -254,8 +261,7 @@ start_ngrok() {
   local tpid
   tpid="$(demo_daemonize "$TUNNEL_LOG" ngrok "${args[@]}")" || return 1
   demo_write_pids tunnel "$tpid"
-  local i url=""
-  local want_port="$DEMO_API_PORT"
+  local i url="" want_port="$DEMO_API_PORT"
   for ((i = 0; i < 40; i++)); do
     if curl -fsS --max-time 2 http://127.0.0.1:4040/api/tunnels >/tmp/qb-ngrok-tunnels.json 2>/dev/null; then
       url="$(DEMO_API_PORT="$want_port" python3 - <<'PY'
@@ -265,78 +271,134 @@ tunnels = json.load(open("/tmp/qb-ngrok-tunnels.json")).get("tunnels") or []
 def addr_of(t):
     cfg = t.get("config") or {}
     return str(cfg.get("addr") or "")
-# Prefer the HTTPS tunnel whose local addr targets our demo API port.
 for t in tunnels:
     pub = t.get("public_url") or ""
     if not pub.startswith("https://"):
         continue
     addr = addr_of(t)
-    if addr.endswith(":" + port) or addr.endswith("://" + "127.0.0.1:" + port) or addr.endswith("://localhost:" + port) or addr == port:
+    if addr.endswith(":" + port) or addr.endswith("://127.0.0.1:" + port) or addr.endswith("://localhost:" + port) or addr == port:
         print(pub)
         break
 else:
-    # Fall back only if a single https tunnel exists.
     https = [t.get("public_url") for t in tunnels if (t.get("public_url") or "").startswith("https://")]
     print(https[0] if len(https) == 1 else "")
 PY
 )"
-      if [[ -n "$url" ]]; then
-        break
-      fi
+      [[ -n "$url" ]] && break
     fi
     sleep 0.5
   done
   if [[ -z "$url" ]]; then
     echo "ERROR: ngrok did not publish an HTTPS URL targeting port ${DEMO_API_PORT}." >&2
-    echo "       Check $TUNNEL_LOG, NGROK_AUTHTOKEN, and that no other ngrok tunnels shadow this port." >&2
-    demo_kill_tracked tunnel
+    demo_kill_tracked tunnel || true
     return 1
   fi
   public_url="$url"
-  if [[ -n "${DEMO_NGROK_DOMAIN:-}" ]]; then
-    stable=1
-  else
-    stable=0
-  fi
+  [[ -n "${DEMO_NGROK_DOMAIN:-}" ]] && stable=1 || stable=0
 }
 
-case "$DEMO_TUNNEL_PROVIDER" in
-  cloudflared)
-    if ! TUNNEL_BIN="$(demo_tunnel_bin)"; then
-      echo "ERROR: cloudflared not found." >&2
-      echo "       Install: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/" >&2
-      echo "       Or place a binary at .tools/cloudflared (gitignored)." >&2
-      echo "       API is running locally but phones cannot reach it without a tunnel." >&2
-      exit 1
-    fi
-    if [[ -n "${DEMO_CLOUDFLARED_CONFIG:-}" ]]; then
-      start_named_cloudflared "$TUNNEL_BIN"
-    else
-      start_quick_cloudflared "$TUNNEL_BIN"
-    fi
-    ;;
-  ngrok)
-    start_ngrok
-    ;;
-  *)
-    echo "ERROR: unknown DEMO_TUNNEL_PROVIDER='$DEMO_TUNNEL_PROVIDER' (use cloudflared or ngrok)." >&2
-    exit 1
-    ;;
-esac
+launch_tunnel() {
+  case "$DEMO_TUNNEL_PROVIDER" in
+    cloudflared)
+      if ! TUNNEL_BIN="$(demo_tunnel_bin)"; then
+        echo "ERROR: cloudflared not found (.tools/cloudflared or PATH)." >&2
+        return 1
+      fi
+      if [[ -n "${DEMO_CLOUDFLARED_CONFIG:-}" ]]; then
+        start_named_cloudflared "$TUNNEL_BIN"
+      else
+        start_quick_cloudflared "$TUNNEL_BIN"
+      fi
+      ;;
+    ngrok)
+      start_ngrok
+      ;;
+    *)
+      echo "ERROR: unknown DEMO_TUNNEL_PROVIDER='$DEMO_TUNNEL_PROVIDER'." >&2
+      return 1
+      ;;
+  esac
+}
 
-if ! demo_valid_public_api_origin "$public_url"; then
-  echo "ERROR: public API origin is invalid: '$public_url'" >&2
-  echo "       Expected https://host with no trailing path (no /health)." >&2
-  demo_kill_tracked tunnel || true
-  exit 1
-fi
+ensure_tunnel() {
+  local attempt rc
+  for ((attempt = 0; attempt <= DEMO_RECOVER_ATTEMPTS; attempt++)); do
+    local existing
+    existing="$(demo_read_pid tunnel 2>/dev/null || true)"
+    if demo_pid_alive "$existing" && demo_pid_matches_role tunnel "$existing"; then
+      if [[ -n "${DEMO_TUNNEL_HOSTNAME:-}" && -n "${DEMO_CLOUDFLARED_CONFIG:-}" ]]; then
+        public_url="https://${DEMO_TUNNEL_HOSTNAME}"
+        stable=1
+      elif [[ -f "$URL_FILE" ]]; then
+        public_url="$(tr -d '[:space:]' <"$URL_FILE")"
+        stable=0
+      else
+        public_url=""
+      fi
+      if [[ -n "$public_url" ]] && demo_valid_public_api_origin "$public_url"; then
+        rc=0
+        demo_public_health_probe "$public_url" || rc=$?
+        if [[ "$rc" -eq 0 ]]; then
+          echo "Tunnel already healthy (pid $existing) → $public_url"
+          return 0
+        fi
+        if [[ "$rc" -eq 2 ]]; then
+          echo "Detected Unauthorized / Tunnel not found on $public_url — restarting tunnel only…"
+        else
+          echo "Public /health failed for reused tunnel $public_url — restarting tunnel only…"
+        fi
+        demo_kill_tracked tunnel || true
+      else
+        echo "Tracked tunnel pid $existing has no usable public URL — restarting tunnel only…"
+        demo_kill_tracked tunnel || true
+      fi
+    elif [[ -n "$existing" ]]; then
+      echo "Clearing stale/mismatched tunnel pid $existing."
+      demo_clear_pid tunnel
+    fi
 
-echo "Verifying public HTTPS /health before declaring startup successful…"
-if ! wait_http_ok "${public_url}/health" 45; then
-  echo "ERROR: ${public_url}/health did not succeed. Tunnel is up but API is not reachable publicly." >&2
-  echo "       See $TUNNEL_LOG and $API_LOG. Refusing to mark startup successful." >&2
-  exit 1
-fi
+    if ! launch_tunnel; then
+      echo "Tunnel start attempt $((attempt + 1)) failed."
+      sleep 1
+      continue
+    fi
+    if ! demo_valid_public_api_origin "$public_url"; then
+      echo "ERROR: invalid public API origin: '$public_url'" >&2
+      demo_kill_tracked tunnel || true
+      continue
+    fi
+    echo "Verifying public HTTPS /health for $public_url …"
+    rc=0
+    local i
+    for ((i = 0; i < 45; i++)); do
+      rc=0
+      demo_public_health_probe "$public_url" || rc=$?
+      if [[ "$rc" -eq 0 ]]; then
+        echo "Public /health: OK"
+        return 0
+      fi
+      if [[ "$rc" -eq 2 ]]; then
+        echo "ERROR: public endpoint reports Unauthorized / Tunnel not found." >&2
+        demo_kill_tracked tunnel || true
+        break
+      fi
+      if demo_tunnel_log_looks_dead; then
+        echo "ERROR: tunnel log indicates failure. See $TUNNEL_LOG" >&2
+        demo_kill_tracked tunnel || true
+        break
+      fi
+      sleep 1
+    done
+    echo "Tunnel health attempt $((attempt + 1)) failed."
+    demo_kill_tracked tunnel || true
+    sleep 1
+  done
+  echo "ERROR: could not establish a healthy public API tunnel." >&2
+  echo "       Local API may still be up at $(api_health_url)." >&2
+  return 1
+}
+
+ensure_tunnel || exit 1
 
 # Persist URL + change detection only after public health succeeds
 if [[ -f "$URL_FILE" ]]; then
@@ -363,10 +425,12 @@ echo "Sites frontend must call this public API origin (no path suffix):"
 echo "  VITE_API_BASE_URL=$public_url"
 echo
 
+visitor_ready=0
 if [[ "$stable" -eq 1 ]]; then
   echo "Tunnel hostname is configured as STABLE ($public_url)."
+  visitor_ready=1
 else
-  echo "WARNING: quick tunnel URL is NOT stable."
+  echo "WARNING: quick tunnel URL is NOT stable (*.trycloudflare.com changes)."
   if [[ -n "$prev" && "$prev" != "$public_url" ]]; then
     echo "WARNING: API URL CHANGED since last start."
     echo "  previous: $prev"
@@ -377,14 +441,51 @@ else
     echo "         and that Sites URL did not change — only the baked-in API origin needs rebuilding."
   elif [[ -z "$prev" ]]; then
     echo "ACTION: after first successful tunnel, build/publish Sites with VITE_API_BASE_URL=$public_url"
-    echo "        then create a QR for the Sites frontend URL (not this tunnel URL)."
   else
     echo "Public API URL matches the previous start ($public_url)."
   fi
-  echo "Tip: configure DEMO_CLOUDFLARED_CONFIG + DEMO_TUNNEL_HOSTNAME for a stable hostname."
+  echo "Tip: configure a Cloudflare named tunnel or ngrok reserved domain for a fixed hostname."
+fi
+
+# Compare published Sites bundle to current tunnel (best-effort)
+if [[ -n "${SITES_ORIGIN:-}" ]]; then
+  baked="$(demo_sites_baked_api_origin || true)"
+  if [[ -n "$baked" ]]; then
+    echo "Published Sites ($SITES_ORIGIN) appears to call: $baked"
+    if [[ "$baked" == "$public_url" ]]; then
+      visitor_ready=1
+      echo "Sites baked API origin matches this start — visitors can use the Sites URL."
+    else
+      visitor_ready=0
+      echo "WARNING: Sites still points at a different API host."
+      echo "         Do NOT tell students the public site works until you rebuild+re-upload dist."
+    fi
+  else
+    echo "Could not read baked API origin from Sites (offline or HTML changed) — assuming mismatch until verified."
+    if [[ "$stable" -ne 1 ]]; then
+      visitor_ready=0
+    fi
+  fi
 fi
 
 echo
 echo "Did NOT start the React DEV server (Sites hosts the production UI)."
-echo "Next: bash scripts/check-demo.sh"
-echo "Stop: bash scripts/stop-demo.sh"
+echo "Check: bash scripts/check-demo.sh"
+echo "Stop:  bash scripts/stop-demo.sh   or double-click Stop QuestBoard.command"
+
+# Export for the .command wrapper
+printf '%s\n' "$public_url" >"$RUN_DIR/last-start-public-url.txt"
+printf '%s\n' "$visitor_ready" >"$RUN_DIR/visitor-ready.txt"
+if [[ -n "${SITES_ORIGIN:-}" ]]; then
+  printf '%s\n' "$SITES_ORIGIN" >"$RUN_DIR/sites-origin.txt"
+fi
+
+if [[ "$visitor_ready" -eq 1 ]]; then
+  echo
+  echo "SUCCESS: laptop stack + visitor path look ready."
+  exit 0
+fi
+echo
+echo "SUCCESS (laptop): local API + tunnel health OK."
+echo "VISITORS: not ready until Sites is rebuilt for $public_url (or a stable tunnel is configured)."
+exit 0

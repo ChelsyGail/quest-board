@@ -1,0 +1,104 @@
+BEFORE users=7 items=7
+=== STOP (clean slate for cold start) ===
+=== QuestBoard classroom demo — stop ===
+Tracked PIDs before stop:
+  api=11453
+  caffeinate=11472
+  tunnel=11483
+Stopped tunnel (pid 11483).
+Stopped api (pid 11453).
+Stopped caffeinate (pid 11472).
+
+Stopped demo-managed API/tunnel/caffeinate only.
+Preserved: MySQL data, questboard_presentation, proof uploads under apps/backend/var/.
+Unrelated listeners on other ports were not touched.
+PASS: 8010 free after stop
+=== COLD START ===
+Schema OK — 21 migrations recorded; core tables present (no create/wipe performed).
+MySQL OK — questboard_presentation. Data and uploads are preserved (no seed/wipe on start).
+Ensuring classroom demo accounts on questboard_presentation…
+classroom demo accounts ready on questboard_presentation: admin_id=7 roles=(<UserRole.STUDENT: 'student'>, <UserRole.ADMIN: 'admin'>); mod_id=8 roles=(<UserRole.STUDENT: 'student'>, <UserRole.MODERATOR: 'moderator'>)
+Starting FastAPI on 127.0.0.1:8010…
+API OK — pid 14235 — http://127.0.0.1:8010/health
+caffeinate started (pid 14256) — laptop should stay awake.
+Starting Cloudflare quick tunnel (hostname changes every start — NOT stable)…
+Verifying public HTTPS /health for https://overseas-markets-them-ought.trycloudflare.com …
+Public /health: OK
+
+=== Demo backend is up ===
+Local API:   http://127.0.0.1:8010/health
+Public API:  https://overseas-markets-them-ought.trycloudflare.com
+Public /health: OK
+MySQL:       127.0.0.1:3306 / questboard_presentation  (not tunneled)
+Uploads:     /Users/mohamedtahakhorchani/Documents/quest-board/apps/backend/var/proof-media-presentation
+PID file:    /Users/mohamedtahakhorchani/Documents/quest-board/var/demo-run/demo.pids
+Logs:        /Users/mohamedtahakhorchani/Documents/quest-board/var/demo-run/
+
+Sites frontend must call this public API origin (no path suffix):
+  VITE_API_BASE_URL=https://overseas-markets-them-ought.trycloudflare.com
+
+WARNING: quick tunnel URL is NOT stable (*.trycloudflare.com changes).
+WARNING: API URL CHANGED since last start.
+  previous: https://southern-postcard-beneath-band.trycloudflare.com
+  current:  https://overseas-markets-them-ought.trycloudflare.com
+ACTION REQUIRED: rebuild and re-publish the Sites frontend with the new VITE_API_BASE_URL.
+                 Old Sites builds will keep calling https://southern-postcard-beneath-band.trycloudflare.com.
+QR CODE: leave the QR unchanged if it already points at the ChatGPT Sites frontend URL
+         and that Sites URL did not change — only the baked-in API origin needs rebuilding.
+Tip: configure a Cloudflare named tunnel or ngrok reserved domain for a fixed hostname.
+Could not read baked API origin from Sites (offline or HTML changed) — assuming mismatch until verified.
+
+Did NOT start the React DEV server (Sites hosts the production UI).
+Check: bash scripts/check-demo.sh
+Stop:  bash scripts/stop-demo.sh   or double-click Stop QuestBoard.command
+
+SUCCESS (laptop): local API + tunnel health OK.
+VISITORS: not ready until Sites is rebuilt for https://overseas-markets-them-ought.trycloudflare.com (or a stable tunnel is configured).
+cold_start_rc=0
+PUBLIC1=https://overseas-markets-them-ought.trycloudflare.com
+Schema OK — 21 migrations recorded; core tables present (no create/wipe performed).
+OK   Required migrations and core tables present
+OK   Tracked API process alive (pid 14235)
+OK   Local API health http://127.0.0.1:8010/health
+OK   Tracked tunnel process alive (pid 14267)
+     Public API: https://overseas-markets-them-ought.trycloudflare.com
+OK   Public API origin shape (https://host, no path)
+OK   Public HTTPS /health via tunnel
+OK   Public /auth/login reachable (HTTP 401 as expected for bad credentials)
+OK   caffeinate running (pid 14256)
+WARN VITE_DISCUSSIONS_API=true — enable in Sites build only after Grove ACL verification
+
+RESULT: OK — local API + HTTPS tunnel look healthy.
+Phone test: open the Sites URL on mobile data, log in, join a quest, upload proof.
+Moderator: use the moderator account from docs/presentation/ACCOUNTS.local.md (gitignored).
+cold_check_rc=0
+=== REPEATED START (should reuse healthy processes) ===
+API already healthy (pid 14235).
+caffeinate already tracked (pid 14256).
+Tunnel already healthy (pid 14267) → https://overseas-markets-them-ought.trycloudflare.com
+Public API:  https://overseas-markets-them-ought.trycloudflare.com
+Public API URL matches the previous start (https://overseas-markets-them-ought.trycloudflare.com).
+SUCCESS (laptop): local API + tunnel health OK.
+repeat_rc=0
+PUBLIC2=https://overseas-markets-them-ought.trycloudflare.com
+PASS: repeated start kept same public URL
+=== DEAD BACKEND recovery ===
+PASS: API dead as intended
+API OK — pid 14871 — http://127.0.0.1:8010/health
+SUCCESS (laptop): local API + tunnel health OK.
+PASS: API healthy after recovery
+dead_api_rc=0
+AFTER users=7 items=7
+PASS: presentation row counts unchanged
+=== STALE TUNNEL recovery ===
+Clearing stale/mismatched tunnel pid 14267.
+Public /health: OK
+Public /health: OK
+SUCCESS (laptop): local API + tunnel health OK.
+stale_rc=0 PUBLIC3=https://leo-flows-rights-balanced.trycloudflare.com
+PASS: replaced stale public URL
+PASS: local API still up after tunnel recovery
+=== STOP then START preserves data ===
+FINAL users=7 (was 7)
+PASS: stop/start preserved users
+=== DONE ===
